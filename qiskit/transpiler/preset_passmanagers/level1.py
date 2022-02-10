@@ -58,9 +58,7 @@ from qiskit.transpiler.passes import Error
 from qiskit.transpiler.passes import ContainsInstruction
 
 from qiskit.transpiler import TranspilerError
-
-# TODO: make optional import
-from qiskit_toqm import ToqmSwap, ToqmLayoutSettings
+from qiskit.utils import optionals
 
 
 def level_1_pass_manager(pass_manager_config: PassManagerConfig) -> PassManager:
@@ -166,6 +164,9 @@ def level_1_pass_manager(pass_manager_config: PassManagerConfig) -> PassManager:
     elif routing_method == "sabre":
         _swap += [SabreSwap(coupling_map, heuristic="lookahead", seed=seed_transpiler)]
     elif routing_method == "toqm":
+        optionals.HAS_TOQM.require_now("TOQM-based routing")
+        from qiskit_toqm import ToqmSwap, ToqmLayoutSettings
+        
         toqm_layout_settings = ToqmLayoutSettings(search_cycle_limit=None) if layout_method == "toqm" else None
         _swap += [ToqmSwap(coupling_map, toqm_layout_settings)]
     elif routing_method == "none":

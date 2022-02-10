@@ -37,9 +37,7 @@ from qiskit.test.mock import (
 from qiskit.converters import circuit_to_dag
 from qiskit.circuit.library import GraphState
 from qiskit.quantum_info import random_unitary
-
-from qiskit_toqm import ToqmSwap
-
+from qiskit.utils import optionals
 
 def emptycircuit():
     """Empty circuit"""
@@ -53,6 +51,7 @@ def circuit_2532():
     return circuit
 
 @ddt
+@unittest.skipUnless(optionals.HAS_TOQM, "TOQM package not installed.")
 class TestToqmSwapPresetPassManager(QiskitTestCase):
     """Test preset passmanagers work as expected when used with TOQM layout and routing."""
 
@@ -61,6 +60,8 @@ class TestToqmSwapPresetPassManager(QiskitTestCase):
 
         def transpile_toqm(*args, **kwargs):
             """Calls transpile"""
+            from qiskit_toqm import ToqmSwap
+
             toqm_result = []
             def callback(**kwargs0):
                 pass_ = kwargs0["pass_"]
