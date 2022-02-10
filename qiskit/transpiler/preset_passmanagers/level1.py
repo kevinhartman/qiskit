@@ -59,6 +59,9 @@ from qiskit.transpiler.passes import ContainsInstruction
 
 from qiskit.transpiler import TranspilerError
 
+# TODO: make optional import
+from qiskit_toqm import ToqmSwap, ToqmLayoutSettings
+
 
 def level_1_pass_manager(pass_manager_config: PassManagerConfig) -> PassManager:
     """Level 1 pass manager: light optimization by simple adjacent gate collapsing.
@@ -127,7 +130,7 @@ def level_1_pass_manager(pass_manager_config: PassManagerConfig) -> PassManager:
     ]
 
     # 3. Use a better layout on densely connected qubits, if circuit needs swaps
-    if layout_method == "trivial":
+    if layout_method in ("trivial", "toqm"):
         _improve_layout = TrivialLayout(coupling_map)
     elif layout_method == "dense":
         _improve_layout = DenseLayout(coupling_map, backend_properties)
@@ -162,6 +165,9 @@ def level_1_pass_manager(pass_manager_config: PassManagerConfig) -> PassManager:
         _swap += [LookaheadSwap(coupling_map, search_depth=4, search_width=4)]
     elif routing_method == "sabre":
         _swap += [SabreSwap(coupling_map, heuristic="lookahead", seed=seed_transpiler)]
+    elif routing_method == "toqm":
+        toqm_layout_settings = ToqmLayoutSettings(search_cycle_limit=None) if layout_method == "toqm" else None
+        _swap += [ToqmSwap(coupling_map, toqm_layout_settings)]
     elif routing_method == "none":
         _swap += [
             Error(

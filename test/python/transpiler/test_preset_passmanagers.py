@@ -12,6 +12,7 @@
 
 """Tests preset pass manager API"""
 
+import enum
 import unittest
 
 from test import combine
@@ -22,7 +23,7 @@ import numpy as np
 from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister
 from qiskit.circuit import Qubit
 from qiskit.compiler import transpile, assemble
-from qiskit.transpiler import CouplingMap, Layout
+from qiskit.transpiler import CouplingMap, Layout, coupling
 from qiskit.circuit.library import U2Gate, U3Gate
 from qiskit.test import QiskitTestCase
 from qiskit.test.mock import (
@@ -37,6 +38,8 @@ from qiskit.converters import circuit_to_dag
 from qiskit.circuit.library import GraphState
 from qiskit.quantum_info import random_unitary
 
+from qiskit_toqm import ToqmSwap
+
 
 def emptycircuit():
     """Empty circuit"""
@@ -49,10 +52,97 @@ def circuit_2532():
     circuit.cx(2, 4)
     return circuit
 
+@ddt
+class TestToqmSwapPresetPassManager(QiskitTestCase):
+    """Test preset passmanagers work as expected when used with TOQM layout and routing."""
+
+    def setUp(self):
+        super().setUp()
+
+        def transpile_toqm(*args, **kwargs):
+            """Calls transpile"""
+            toqm_result = []
+            def callback(**kwargs0):
+                pass_ = kwargs0["pass_"]
+                if isinstance(pass_, ToqmSwap):
+                    toqm_result.append(pass_.toqm_result)
+
+            kwargs["routing_method"] = "toqm"
+            kwargs["callback"] = callback
+
+            qc = transpile(*args, **kwargs)
+
+            self.assertTrue(len(toqm_result) == 1)
+            return (qc, qc._layout, toqm_result[0])
+
+        def is_trivial_layout(toqm_result):
+            for vidx in range(toqm_result.numLogicalQubits):
+                pidx = toqm_result.inferredLaq[vidx]
+
+                if pidx != vidx:
+                    return False
+            
+            for vidx in range(toqm_result.numLogicalQubits, toqm_result.numPhysicalQubits):
+                pidx = toqm_result.inferredLaq[vidx]
+
+                if pidx != -1:
+                    return False
+
+            return True
+
+        self.transpile_toqm = transpile_toqm
+        self.is_trivial_layout = is_trivial_layout
+
+    # TODO: add other levels!
+    @combine(level=[1], name="level{level}")
+    def test_toqm_layout_and_routing(self, level):
+        """Test TOQM layout and routing (level={level})"""
+        qr = QuantumRegister(5, "qr")
+        qc = QuantumCircuit(qr)
+
+        # Note: qubit 3 is intentionally unused
+        qc.cx(0, 1)
+        qc.cx(0, 2)
+        qc.cx(0, 4)
+        qc.cx(1, 2)
+        qc.cx(1, 4)
+        qc.cx(2, 4)
+
+        # LNN coupling map
+        coupling = CouplingMap([
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 4],
+            [4, 5],
+            [5, 6]
+        ])
+
+        # Use TOQM layout and routing.
+        (_, layout_1, _) = self.transpile_toqm(qc, coupling_map=coupling, optimization_level=level, seed_transpiler=42, layout_method="toqm")
+
+        # Add ancilla created during embed phase to the original circuit.
+        # We need to do this because we're going to call transpile again with
+        # the layout created by TOQM, and that layout will otherwise contain
+        # bits that aren't in the original circuit.
+        ancilla_reg = next(r for r in layout_1.get_registers() if r.name == "ancilla")
+        qc.add_register(ancilla_reg)
+
+        # Run again using the layout TOQM found as an initial layout.
+        # This time, no layout changes should be made.
+        (_, layout_2, toqm_2) = self.transpile_toqm(qc,
+            coupling_map=coupling,
+            optimization_level=level,
+            seed_transpiler=42,
+            initial_layout=layout_1.get_physical_bits())
+
+        self.assertEqual(layout_1, layout_2)
+        self.assertTrue(self.is_trivial_layout(toqm_2))
 
 @ddt
 class TestPresetPassManager(QiskitTestCase):
     """Test preset passmanagers work as expected."""
+
 
     @combine(level=[0, 1, 2, 3], name="level{level}")
     def test_no_coupling_map_with_sabre(self, level):
