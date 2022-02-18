@@ -14,6 +14,7 @@
 
 import enum
 import unittest
+from qiskit.providers import backend
 
 from test import combine
 from ddt import ddt, data
@@ -32,6 +33,7 @@ from qiskit.test.mock import (
     FakeJohannesburg,
     FakeRueschlikon,
     FakeTokyo,
+    FakeVigo,
     FakePoughkeepsie,
 )
 from qiskit.converters import circuit_to_dag
@@ -59,7 +61,7 @@ class TestToqmSwapPresetPassManager(QiskitTestCase):
         super().setUp()
 
         def transpile_toqm(*args, **kwargs):
-            """Calls transpile"""
+            """Calls transpile using TOQM routing."""
             from qiskit_toqm import ToqmSwap
 
             toqm_result = []
@@ -96,6 +98,25 @@ class TestToqmSwapPresetPassManager(QiskitTestCase):
 
     # TODO: add other levels!
     @combine(level=[1], name="level{level}")
+    def test_toqm_vigo(self, level):
+        qr = QuantumRegister(5, "qr")
+        qc = QuantumCircuit(qr)
+
+        # Note: qubit 3 is intentionally unused
+        qc.cx(0, 1)
+        qc.cx(0, 2)
+        qc.cx(0, 4)
+        qc.cx(1, 2)
+        qc.cx(1, 4)
+        qc.cx(2, 4)
+
+        # Use TOQM layout and routing.
+        (_, layout, _) = self.transpile_toqm(qc, backend=FakeVigo(), optimization_level=level, seed_transpiler=42, layout_method="toqm")
+        return
+
+    # TODO: add other levels!
+    # TODO: add custom instruction_latencies to get this passing again.
+    @combine(level=[1], name="level{level}")
     def test_toqm_layout_and_routing(self, level):
         """Test TOQM layout and routing (level={level})"""
         qr = QuantumRegister(5, "qr")
@@ -126,8 +147,9 @@ class TestToqmSwapPresetPassManager(QiskitTestCase):
         # We need to do this because we're going to call transpile again with
         # the layout created by TOQM, and that layout will otherwise contain
         # bits that aren't in the original circuit.
-        ancilla_reg = next(r for r in layout_1.get_registers() if r.name == "ancilla")
-        qc.add_register(ancilla_reg)
+        ancilla_reg = next((r for r in layout_1.get_registers() if r.name == "ancilla"), None)
+        if ancilla_reg:
+            qc.add_register(ancilla_reg)
 
         # Run again using the layout TOQM found as an initial layout.
         # This time, no layout changes should be made.

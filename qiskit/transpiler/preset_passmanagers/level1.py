@@ -166,9 +166,15 @@ def level_1_pass_manager(pass_manager_config: PassManagerConfig) -> PassManager:
     elif routing_method == "toqm":
         optionals.HAS_TOQM.require_now("TOQM-based routing")
         from qiskit_toqm import ToqmSwap, ToqmLayoutSettings
-        
-        toqm_layout_settings = ToqmLayoutSettings(search_cycle_limit=None) if layout_method == "toqm" else None
-        _swap += [ToqmSwap(coupling_map, instruction_durations, toqm_layout_settings)]
+        _swap += [
+            ToqmSwap(
+                coupling_map,
+                instruction_durations,
+                basis_gates,
+                backend_properties,
+                ToqmLayoutSettings(search_cycle_limit=None) if layout_method == "toqm" else None
+            )
+        ]
     elif routing_method == "none":
         _swap += [
             Error(
