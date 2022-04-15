@@ -97,12 +97,18 @@ def getenv_list(var_name):
     value = os.getenv(var_name)
     return None if value is None else value.split()
 
+# Note: a value of `None` for any of the following methods means that
+# the selected pass manager gets to choose. However, to avoid complexity,
+# its not possible to specify `None` when overriding these with environment
+# variables. Really, `None` is useful only for testing Terra's pass managers,
+# and if you're overriding these, your goal is probably to test a specific
+# pass or set of passes instead.
 layout_methods = getenv_list("QISKIT_RANDOMIZED_TEST_LAYOUT_METHODS") \
-    or ["trivial", "dense", "noise_adaptive", "sabre"]
+    or [None, "trivial", "dense", "noise_adaptive", "sabre"]
 routing_methods = getenv_list("QISKIT_RANDOMIZED_TEST_ROUTING_METHODS") \
-    or ["basic", "stochastic", "lookahead", "sabre"]
+    or [None, "basic", "stochastic", "lookahead", "sabre"]
 scheduling_methods = getenv_list("QISKIT_RANDOMIZED_TEST_SCHEDULING_METHODS") \
-    or ["alap", "asap"]
+    or [None, "alap", "asap"]
 
 backend_needs_durations = strtobool(
     os.getenv("QISKIT_RANDOMIZED_TEST_BACKEND_NEEDS_DURATIONS", "False")
@@ -353,9 +359,9 @@ class QCircuitMachine(RuleBasedStateMachine):
     @st.composite
     def transpiler_conf(draw):
         opt_level = draw(st.integers(min_value=0, max_value=3))
-        layout_method = draw(st.one_of(st.none(), st.sampled_from(layout_methods)))
-        routing_method = draw(st.one_of(st.none(), st.sampled_from(routing_methods)))
-        scheduling_method = draw(st.one_of(st.none(), st.sampled_from(scheduling_methods)))
+        layout_method = draw(st.sampled_from(layout_methods))
+        routing_method = draw(st.sampled_from(routing_methods))
+        scheduling_method = draw(st.sampled_from(scheduling_methods))
 
         compatible_backends = st.one_of(st.none(), st.sampled_from(mock_backends))
         if scheduling_method is not None or backend_needs_durations:
