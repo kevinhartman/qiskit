@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use crate::getenv_use_multiple_threads;
 use crate::nlayout::NLayout;
 use crate::sabre_swap::neighbor_table::NeighborTable;
-use crate::sabre_swap::sabre_dag::SabreDAG;
+use crate::sabre_swap::sabre_dag::{SabreControlFlowOp, SabreDAG};
 use crate::sabre_swap::{build_swap_map_inner, Heuristic, SabreResult};
 
 #[pyfunction]
@@ -116,10 +116,15 @@ fn layout_trial(
         // recurse into blocks. We remove them here, but still map control
         // flow node IDs to an empty block list so Sabre treats these ops
         // as control flow nodes, but doesn't route their blocks.
-        let node_blocks_empty = dag
-            .node_blocks
-            .iter()
-            .map(|(node_index, _)| (*node_index, Vec::with_capacity(0)));
+        let node_blocks_empty = dag.control_flow_ops.iter().map(|(node_index, _)| {
+            (
+                *node_index,
+                SabreControlFlowOp {
+                    exhaustive: false,
+                    blocks: Vec::with_capacity(0),
+                },
+            )
+        });
         SabreDAG::new(
             dag.num_qubits,
             dag.num_clbits,
@@ -179,10 +184,13 @@ fn apply_layout(dag: &SabreDAG, layout: &NLayout) -> SabreDAG {
         let new_qargs: Vec<usize> = qargs.iter().map(|n| layout.logic_to_phys[*n]).collect();
         (*node_index, new_qargs, cargs.clone())
     });
-    let node_blocks = dag.node_blocks.iter().map(|(node_index, blocks)| {
+    let node_blocks = dag.control_flow_ops.iter().map(|(node_index, op)| {
         (
             *node_index,
-            blocks.iter().map(|d| apply_layout(d, layout)).collect(),
+            SabreControlFlowOp {
+                exhaustive: op.exhaustive,
+                blocks: op.blocks.iter().map(|d| apply_layout(d, layout)).collect(),
+            },
         )
     });
     SabreDAG::new(

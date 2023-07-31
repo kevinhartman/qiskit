@@ -42,7 +42,7 @@ use crate::nlayout::NLayout;
 
 use layer::{ExtendedSet, FrontLayer};
 use neighbor_table::NeighborTable;
-use sabre_dag::SabreDAG;
+use sabre_dag::{SabreControlFlowOp, SabreDAG};
 use swap_map::SwapMap;
 
 const BEST_EPSILON: f64 = 1e-10; // Epsilon used in minimum-score calculations.
@@ -68,7 +68,7 @@ pub struct SabreResult {
     pub map: SwapMap,
     pub node_order: Vec<usize>,
     #[pyo3(get)]
-    pub node_block_results: NodeBlockResults,
+    pub ctrl_flow_op_results: ControlFlowOpResults,
 }
 
 #[pymethods]
@@ -81,12 +81,12 @@ impl SabreResult {
 
 #[pyclass(mapping, module = "qiskit._accelerate.sabre_swap")]
 #[derive(Clone, Debug)]
-pub struct NodeBlockResults {
+pub struct ControlFlowOpResults {
     pub results: HashMap<usize, Vec<BlockResult>>,
 }
 
 #[pymethods]
-impl NodeBlockResults {
+impl ControlFlowOpResults {
     // Mapping Protocol
     pub fn __len__(&self) -> usize {
         self.results.len()
@@ -180,7 +180,7 @@ fn populate_extended_set(
             *decremented.entry(successor_index).or_insert(0) += 1;
             required_predecessors[successor_index] -= 1;
             if required_predecessors[successor_index] == 0 {
-                if !dag.node_blocks.contains_key(&successor_index) {
+                if !dag.control_flow_ops.contains_key(&successor_index) {
                     if let [a, b] = dag.dag[successor_node].1[..] {
                         extended_set.insert(successor_node, &[a, b]);
                     }
@@ -330,8 +330,8 @@ fn swap_map_trial(
     let mut num_search_steps: u8 = 0;
     let mut qubits_decay: Vec<f64> = vec![1.; num_qubits];
     let mut rng = Pcg64Mcg::seed_from_u64(seed);
-    let mut node_block_results: HashMap<usize, Vec<BlockResult>> =
-        HashMap::with_capacity(dag.node_blocks.len());
+    let mut ctrl_flow_results: HashMap<usize, Vec<BlockResult>> =
+        HashMap::with_capacity(dag.control_flow_ops.len());
 
     for node in dag.dag.node_indices() {
         for edge in dag.dag.edges(node) {
@@ -364,7 +364,7 @@ fn swap_map_trial(
         &mut gate_order,
         &mut front_layer,
         &mut required_predecessors,
-        &mut node_block_results,
+        &mut ctrl_flow_results,
         &route_block_dag,
     );
     populate_extended_set(
@@ -431,7 +431,7 @@ fn swap_map_trial(
             &mut front_layer,
             &mut extended_set,
             &mut required_predecessors,
-            &mut node_block_results,
+            &mut ctrl_flow_results,
             &route_block_dag,
         );
         qubits_decay.fill(1.);
@@ -441,8 +441,8 @@ fn swap_map_trial(
         SabreResult {
             map: SwapMap { map: out_map },
             node_order: gate_order,
-            node_block_results: NodeBlockResults {
-                results: node_block_results,
+            ctrl_flow_op_results: ControlFlowOpResults {
+                results: ctrl_flow_results,
             },
         },
         layout,
@@ -465,7 +465,7 @@ fn update_route<F>(
     front_layer: &mut FrontLayer,
     extended_set: &mut ExtendedSet,
     required_predecessors: &mut [u32],
-    node_block_results: &mut HashMap<usize, Vec<BlockResult>>,
+    ctrl_flow_results: &mut HashMap<usize, Vec<BlockResult>>,
     route_block_dag: &F,
 ) where
     F: Fn(&SabreDAG, NLayout) -> (SabreResult, NLayout),
@@ -486,7 +486,7 @@ fn update_route<F>(
         gate_order,
         front_layer,
         required_predecessors,
-        node_block_results,
+        ctrl_flow_results,
         route_block_dag,
     );
     // Ideally we'd know how to mutate the extended set directly, but since its limited size ties
@@ -551,40 +551,33 @@ fn route_reachable_nodes<F>(
     gate_order: &mut Vec<usize>,
     front_layer: &mut FrontLayer,
     required_predecessors: &mut [u32],
-    node_block_results: &mut HashMap<usize, Vec<BlockResult>>,
+    ctrl_flow_results: &mut HashMap<usize, Vec<BlockResult>>,
     route_block_dag: &F,
 ) where
     F: Fn(&SabreDAG, NLayout) -> (SabreResult, NLayout),
 {
+    let mut rng = Pcg64Mcg::seed_from_u64(seed);
     let mut to_visit = to_visit.to_vec();
+    let mut to_visit_ctrl_flow = Vec::new();
     let mut i = 0;
-    // Iterate through `to_visit`, except we often push new nodes onto the end of it.
-    while i < to_visit.len() {
-        let node = to_visit[i];
-        i += 1;
-        let (py_node, qubits) = &dag.dag[node];
-
-        match dag.node_blocks.get(py_node) {
-            Some(blocks) => {
-                // Control flow op. Route all blocks for current layout.
-                let mut block_results: Vec<BlockResult> = Vec::with_capacity(blocks.len());
-                for inner_dag in blocks {
-                    let (inner_dag_routed, inner_final_layout) =
-                        route_block_dag(inner_dag, layout.copy());
-
-                    // For now, we always append a swap circuit that gets the inner block
-                    // back to the parent's layout.
-                    let swap_epilogue =
-                        gen_swap_epilogue(coupling, inner_final_layout, layout, seed);
-                    let block_result = BlockResult {
-                        result: inner_dag_routed,
-                        swap_epilogue,
-                    };
-                    block_results.push(block_result);
-                }
-                node_block_results.insert_unique_unchecked(*py_node, block_results);
+    // Iterate through `to_visit` and `to_visit_ctrl_flow` until both are
+    // empty. For each iteration, we process a single node, always pulling from
+    // `to_visit`, first. This way, we're sure to route all reachable nodes in
+    // the current layer before routing control flow ops, which may permute the
+    // layout (i.e. we route control flow ops ALAP).
+    while i < to_visit.len() || !to_visit_ctrl_flow.is_empty() {
+        let (node, py_node) = if i < to_visit.len() {
+            // Visit node from `to_visit`.
+            let node = to_visit[i];
+            i += 1;
+            let (py_node, qubits) = &dag.dag[node];
+            if dag.control_flow_ops.contains_key(py_node) {
+                // Defer control flow processing to the end!
+                to_visit_ctrl_flow.push(node);
+                continue;
             }
-            None => match qubits[..] {
+
+            match qubits[..] {
                 // A gate op whose connectivity must match the device to be
                 // placed in the gate order.
                 [a, b]
@@ -599,8 +592,48 @@ fn route_reachable_nodes<F>(
                     continue;
                 }
                 _ => {}
-            },
-        }
+            }
+            (node, py_node)
+        } else {
+            // Visit control flow operation.
+            // Choose one at random and schedule immediately.
+            let to_remove_idx = rng.gen_range(0..to_visit_ctrl_flow.len());
+            let node = to_visit_ctrl_flow.swap_remove(to_remove_idx);
+            let (py_node, _) = &dag.dag[node];
+            let SabreControlFlowOp { exhaustive, blocks } =
+                dag.control_flow_ops.get(py_node).unwrap();
+
+            let to_layout = if *exhaustive {
+                // TODO: choose best layout for exhaustive.
+                layout
+            } else {
+                // This control flow op is not exhaustive, so we need to
+                // generate a swap epilogue that routes all of its blocks
+                // back to the current layout.
+                layout
+            };
+
+            let mut block_results: Vec<BlockResult> = Vec::with_capacity(blocks.len());
+            for inner_dag in blocks {
+                let (inner_dag_routed, inner_final_layout) =
+                    route_block_dag(inner_dag, layout.copy());
+
+                // For now, we always append a swap circuit that gets the inner block
+                // back to the parent's layout.
+                let swap_epilogue =
+                    gen_swap_epilogue(coupling, inner_final_layout, to_layout, seed);
+                let block_result = BlockResult {
+                    result: inner_dag_routed,
+                    swap_epilogue,
+                };
+                block_results.push(block_result);
+            }
+            ctrl_flow_results.insert_unique_unchecked(*py_node, block_results);
+
+            // TODO: update front layer
+
+            (node, py_node)
+        };
 
         gate_order.push(*py_node);
         for edge in dag.dag.edges_directed(node, Direction::Outgoing) {
@@ -747,7 +780,7 @@ pub fn sabre_swap(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<SabreDAG>()?;
     m.add_class::<SwapMap>()?;
     m.add_class::<BlockResult>()?;
-    m.add_class::<NodeBlockResults>()?;
+    m.add_class::<ControlFlowOpResults>()?;
     m.add_class::<SabreResult>()?;
     Ok(())
 }

@@ -27,7 +27,14 @@ pub struct SabreDAG {
     pub dag: DiGraph<(usize, Vec<usize>), ()>,
     pub first_layer: Vec<NodeIndex>,
     pub nodes: Vec<(usize, Vec<usize>, HashSet<usize>)>,
-    pub node_blocks: HashMap<usize, Vec<SabreDAG>>,
+    pub control_flow_ops: HashMap<usize, SabreControlFlowOp>,
+}
+
+#[pyclass(module = "qiskit._accelerate.sabre_swap")]
+#[derive(Clone, Debug)]
+pub struct SabreControlFlowOp {
+    pub exhaustive: bool,
+    pub blocks: Vec<SabreDAG>,
 }
 
 #[pymethods]
@@ -38,7 +45,7 @@ impl SabreDAG {
         num_qubits: usize,
         num_clbits: usize,
         nodes: Vec<(usize, Vec<usize>, HashSet<usize>)>,
-        node_blocks: HashMap<usize, Vec<SabreDAG>>,
+        control_flow_ops: HashMap<usize, SabreControlFlowOp>,
     ) -> PyResult<Self> {
         let mut qubit_pos: Vec<Option<NodeIndex>> = vec![None; num_qubits];
         let mut clbit_pos: Vec<Option<NodeIndex>> = vec![None; num_clbits];
@@ -74,7 +81,7 @@ impl SabreDAG {
             dag,
             first_layer,
             nodes,
-            node_blocks,
+            control_flow_ops,
         })
     }
 }
