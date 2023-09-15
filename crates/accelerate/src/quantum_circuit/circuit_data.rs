@@ -17,25 +17,58 @@ use pyo3::basic::CompareOp;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{IntoPyDict, PyDict, PyList, PySlice, PyTuple};
-use pyo3::{PyObject, PyResult, PyTraverseError, PyVisit};
+use pyo3::{AsPyPointer, PyObject, PyResult, PyTraverseError, PyVisit};
 use std::cmp::{max, min};
 use std::iter::zip;
 use std::mem::swap;
+use std::ops::Deref;
+
+#[derive(Clone, Debug)]
+struct GCOption<T>(Option<T>);
+
+impl<T> GCOption<T> {
+    fn clear(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl<T> Deref for GCOption<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl<T> From<T> for GCOption<T> {
+    fn from(value: T) -> Self {
+        GCOption(Some(value))
+    }
+}
+
+impl<T> AsPyPointer for GCOption<T>
+where
+    T: AsPyPointer,
+{
+    fn as_ptr(&self) -> *mut pyo3::ffi::PyObject {
+        self.0.as_ptr()
+    }
+}
 
 // Private type use to store instructions with interned arg lists.
 #[derive(Clone, Debug)]
-struct InternedInstruction(Option<PyObject>, IndexType, IndexType);
+struct InternedInstruction(GCOption<PyObject>, IndexType, IndexType);
 
 #[pyclass(sequence, module = "qiskit._accelerate.quantum_circuit")]
 #[derive(Clone, Debug)]
 pub struct CircuitData {
     data: Vec<InternedInstruction>,
-    intern_context: Option<Py<InternContext>>,
-    new_callable: Option<PyObject>,
-    qubits: Py<PyList>,
-    clbits: Py<PyList>,
-    qubit_indices: Py<PyDict>,
-    clbit_indices: Py<PyDict>,
+    intern_context: GCOption<Py<InternContext>>,
+    new_callable: GCOption<PyObject>,
+    qubits: GCOption<Py<PyList>>,
+    clbits: GCOption<Py<PyList>>,
+    qubit_indices: GCOption<Py<PyDict>>,
+    clbit_indices: GCOption<Py<PyDict>>,
 }
 
 #[derive(FromPyObject)]
@@ -64,12 +97,12 @@ impl CircuitData {
     ) -> PyResult<Self> {
         Ok(CircuitData {
             data: Vec::new(),
-            intern_context: Some(intern_context),
-            new_callable: Some(new_callable),
-            qubits,
-            clbits,
-            qubit_indices,
-            clbit_indices,
+            intern_context: intern_context.into(),
+            new_callable: new_callable.into(),
+            qubits: qubits.into(),
+            clbits: clbits.into(),
+            qubit_indices: qubit_indices.into(),
+            clbit_indices: clbit_indices.into(),
         })
     }
 
@@ -102,7 +135,7 @@ impl CircuitData {
                     let context = self.context(py)?;
                     let qargs = context.lookup(*qargs_slot);
                     let cargs = context.lookup(*cargs_slot);
-                    self.new_callable.as_ref().unwrap().call1(
+                    self.new_callable.call1(
                         py,
                         (
                             op,
@@ -265,10 +298,14 @@ impl CircuitData {
     fn __clear__(&mut self) {
         // TODO: do we need to explicitly clear qubits, clbit, qubit_indices, and clbit_indices?
         for InternedInstruction(op, _, _) in self.data.iter_mut() {
-            *op = None;
+            op.clear();
         }
-        self.intern_context = None;
-        self.new_callable = None;
+        self.intern_context.clear();
+        self.new_callable.clear();
+        self.qubits.clear();
+        self.clbits.clear();
+        self.qubit_indices.clear();
+        self.clbit_indices.clear();
     }
 }
 
@@ -279,12 +316,12 @@ enum IndexFor {
 
 impl CircuitData {
     fn context<'a>(&'a self, py: Python<'a>) -> PyResult<PyRef<InternContext>> {
-        let cell: &'a PyCell<InternContext> = self.intern_context.as_ref().unwrap().as_ref(py);
+        let cell: &'a PyCell<InternContext> = self.intern_context.as_ref(py);
         Ok(cell.try_borrow()?)
     }
 
     fn context_mut<'a>(&'a self, py: Python<'a>) -> PyResult<PyRefMut<InternContext>> {
-        let cell: &PyCell<InternContext> = self.intern_context.as_ref().unwrap().as_ref(py);
+        let cell: &PyCell<InternContext> = self.intern_context.as_ref(py);
         Ok(cell.try_borrow_mut()?)
     }
 
@@ -375,7 +412,7 @@ impl CircuitData {
         };
 
         Ok(InternedInstruction(
-            Some(elem.operation),
+            elem.operation.into(),
             cache_args(self.qubit_indices.as_ref(py), elem.qubits)?,
             cache_args(self.clbit_indices.as_ref(py), elem.clbits)?,
         ))
