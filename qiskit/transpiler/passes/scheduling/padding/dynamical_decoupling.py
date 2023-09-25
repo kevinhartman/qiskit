@@ -224,7 +224,7 @@ class PadDynamicalDecoupling(BasePadding):
                 continue
 
             sequence_lengths = []
-            for index, gate in enumerate(self._dd_sequence):
+            for gate in self._dd_sequence:
                 try:
                     # Check calibration.
                     params = self._resolve_params(gate)
@@ -246,8 +246,6 @@ class PadDynamicalDecoupling(BasePadding):
                     gate_length = self._durations.get(gate, physical_index)
                 sequence_lengths.append(gate_length)
                 # Update gate duration. This is necessary for current timeline drawer, i.e. scheduled.
-                gate = gate.to_mutable()
-                self._dd_sequence[index] = gate
                 gate.duration = gate_length
             self._dd_sequence_lengths[qubit] = sequence_lengths
 

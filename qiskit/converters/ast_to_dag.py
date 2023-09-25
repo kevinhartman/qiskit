@@ -234,8 +234,7 @@ class AstInterpreter:
         maxidx = max([len(id0), len(id1)])
         for idx in range(maxidx):
             cx_gate = std.CXGate()
-            if self.condition:
-                cx_gate = cx_gate.c_if(*self.condition)
+            cx_gate.condition = self.condition
             if len(id0) > 1 and len(id1) > 1:
                 self.dag.apply_operation_back(cx_gate, [id0[idx], id1[idx]], [], check=False)
             elif len(id0) > 1:
@@ -253,8 +252,7 @@ class AstInterpreter:
             )
         for idx, idy in zip(id0, id1):
             meas_gate = Measure()
-            if self.condition:
-                meas_gate = meas_gate.c_if(*self.condition)
+            meas_gate.condition = self.condition
             self.dag.apply_operation_back(meas_gate, [idx], [idy], check=False)
 
     def _process_if(self, node):
@@ -343,8 +341,7 @@ class AstInterpreter:
             id0 = self._process_bit_id(node.children[0])
             for i, _ in enumerate(id0):
                 reset = Reset()
-                if self.condition:
-                    reset = reset.c_if(*self.condition)
+                reset.condition = self.condition
                 self.dag.apply_operation_back(reset, [id0[i]], [], check=False)
 
         elif node.type == "if":
@@ -401,8 +398,7 @@ class AstInterpreter:
             QiskitError: if encountering a non-basis opaque gate
         """
         op = self._create_op(name, params)
-        if self.condition:
-            op = op.c_if(*self.condition)
+        op.condition = self.condition
         self.dag.apply_operation_back(op, qargs, [], check=False)
 
     def _create_op(self, name, params):

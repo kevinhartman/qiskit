@@ -17,14 +17,14 @@ from typing import Optional
 
 import numpy
 
-from qiskit.circuit.singleton_gate import SingletonGate
+from qiskit.circuit.gate import Gate
 from qiskit.circuit.library.standard_gates.p import PhaseGate
 from qiskit.circuit.quantumregister import QuantumRegister
 from qiskit.circuit._utils import with_gate_array
 
 
 @with_gate_array([[1, 0], [0, (1 + 1j) / math.sqrt(2)]])
-class TGate(SingletonGate):
+class TGate(Gate):
     r"""Single qubit T gate (Z**0.25).
 
     It induces a :math:`\pi/4` phase, and is sometimes called the pi/8 gate
@@ -55,13 +55,9 @@ class TGate(SingletonGate):
     Equivalent to a :math:`\pi/4` radian rotation about the Z axis.
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create new T gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "t", 1, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("t", 1, [], label=label)
 
     def _define(self):
         """
@@ -90,7 +86,7 @@ class TGate(SingletonGate):
 
 
 @with_gate_array([[1, 0], [0, (1 - 1j) / math.sqrt(2)]])
-class TdgGate(SingletonGate):
+class TdgGate(Gate):
     r"""Single qubit T-adjoint gate (~Z**0.25).
 
     It induces a :math:`-\pi/4` phase.
@@ -120,13 +116,9 @@ class TdgGate(SingletonGate):
     Equivalent to a :math:`-\pi/4` radian rotation about the Z axis.
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create new Tdg gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "tdg", 1, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("tdg", 1, [], label=label)
 
     def _define(self):
         """

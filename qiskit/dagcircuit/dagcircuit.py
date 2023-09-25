@@ -833,10 +833,7 @@ class DAGCircuit:
                 m_cargs = [edge_map.get(x, x) for x in nd.cargs]
                 op = nd.op.copy()
                 if (condition := getattr(op, "condition", None)) is not None:
-                    if not isinstance(op, ControlFlowOp):
-                        op = op.c_if(*variable_mapper.map_condition(condition, allow_reorder=True))
-                    else:
-                        op.condition = variable_mapper.map_condition(condition, allow_reorder=True)
+                    op.condition = variable_mapper.map_condition(condition, allow_reorder=True)
                 elif isinstance(op, SwitchCaseOp):
                     op.target = variable_mapper.map_target(op.target)
                 dag.apply_operation_back(op, m_qargs, m_cargs, check=False)
@@ -1275,11 +1272,7 @@ class DAGCircuit:
                         "cannot propagate a condition to an element that acts on those bits"
                     )
                 new_op = copy.copy(in_node.op)
-                if new_condition:
-                    if not isinstance(new_op, ControlFlowOp):
-                        new_op = new_op.c_if(*new_condition)
-                    else:
-                        new_op.condition = new_condition
+                new_op.condition = new_condition
                 in_dag.apply_operation_back(new_op, in_node.qargs, in_node.cargs, check=False)
         else:
             in_dag = input_dag
@@ -1363,13 +1356,8 @@ class DAGCircuit:
                     label=old_node.op.label,
                 )
             elif getattr(old_node.op, "condition", None) is not None:
-                m_op = old_node.op
-                if not isinstance(old_node.op, ControlFlowOp):
-                    new_condition = variable_mapper.map_condition(m_op.condition)
-                    if new_condition is not None:
-                        m_op = m_op.c_if(*new_condition)
-                else:
-                    m_op.condition = variable_mapper.map_condition(m_op.condition)
+                m_op = copy.copy(old_node.op)
+                m_op.condition = variable_mapper.map_condition(m_op.condition)
             else:
                 m_op = old_node.op
             m_qargs = [wire_map[x] for x in old_node.qargs]
@@ -1442,10 +1430,7 @@ class DAGCircuit:
             if (old_condition := getattr(node.op, "condition", None)) is not None:
                 if not isinstance(op, Instruction):
                     raise DAGCircuitError("Cannot add a condition on a generic Operation.")
-                if not isinstance(node.op, ControlFlowOp):
-                    op = op.c_if(*old_condition)
-                else:
-                    op.condition = old_condition
+                op.condition = old_condition
                 new_wires.update(condition_resources(old_condition).clbits)
 
         if new_wires != current_wires:

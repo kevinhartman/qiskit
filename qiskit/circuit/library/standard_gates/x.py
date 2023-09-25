@@ -17,7 +17,7 @@ from math import ceil, pi
 import numpy
 from qiskit.utils.deprecation import deprecate_func
 from qiskit.circuit.controlledgate import ControlledGate
-from qiskit.circuit.singleton_gate import SingletonGate
+from qiskit.circuit.gate import Gate
 from qiskit.circuit.quantumregister import QuantumRegister
 from qiskit.circuit._utils import _ctrl_state_to_int, with_gate_array, with_controlled_gate_array
 from .h import HGate
@@ -30,7 +30,7 @@ _X_ARRAY = [[0, 1], [1, 0]]
 
 
 @with_gate_array(_X_ARRAY)
-class XGate(SingletonGate):
+class XGate(Gate):
     r"""The single-qubit Pauli-X gate (:math:`\sigma_x`).
 
     Can be applied to a :class:`~qiskit.circuit.QuantumCircuit`
@@ -76,13 +76,9 @@ class XGate(SingletonGate):
         |1\rangle \rightarrow |0\rangle
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create new X gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "x", 1, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("x", 1, [], label=label)
 
     def _define(self):
         """
@@ -119,12 +115,8 @@ class XGate(SingletonGate):
         Returns:
             ControlledGate: controlled version of this gate.
         """
-        gate = MCXGate(
-            num_ctrl_qubits=num_ctrl_qubits,
-            label=label,
-            ctrl_state=ctrl_state,
-            _base_label=self.label,
-        )
+        gate = MCXGate(num_ctrl_qubits=num_ctrl_qubits, label=label, ctrl_state=ctrl_state)
+        gate.base_gate.label = self.label
         return gate
 
     def inverse(self):
@@ -196,21 +188,10 @@ class CXGate(ControlledGate):
         `|a, b\rangle \rightarrow |a, a \oplus b\rangle`
     """
 
-    def __init__(
-        self,
-        label: Optional[str] = None,
-        ctrl_state: Optional[Union[str, int]] = None,
-        _base_label=None,
-    ):
+    def __init__(self, label: Optional[str] = None, ctrl_state: Optional[Union[str, int]] = None):
         """Create new CX gate."""
         super().__init__(
-            "cx",
-            2,
-            [],
-            num_ctrl_qubits=1,
-            label=label,
-            ctrl_state=ctrl_state,
-            base_gate=XGate(label=_base_label),
+            "cx", 2, [], num_ctrl_qubits=1, label=label, ctrl_state=ctrl_state, base_gate=XGate()
         )
 
     def control(
@@ -232,12 +213,8 @@ class CXGate(ControlledGate):
         """
         ctrl_state = _ctrl_state_to_int(ctrl_state, num_ctrl_qubits)
         new_ctrl_state = (self.ctrl_state << num_ctrl_qubits) | ctrl_state
-        gate = MCXGate(
-            num_ctrl_qubits=num_ctrl_qubits + 1,
-            label=label,
-            ctrl_state=new_ctrl_state,
-            _base_label=self.label,
-        )
+        gate = MCXGate(num_ctrl_qubits=num_ctrl_qubits + 1, label=label, ctrl_state=new_ctrl_state)
+        gate.base_gate.label = self.label
         return gate
 
     def inverse(self):
@@ -314,21 +291,10 @@ class CCXGate(ControlledGate):
 
     """
 
-    def __init__(
-        self,
-        label: Optional[str] = None,
-        ctrl_state: Optional[Union[str, int]] = None,
-        _base_label=None,
-    ):
+    def __init__(self, label: Optional[str] = None, ctrl_state: Optional[Union[str, int]] = None):
         """Create new CCX gate."""
         super().__init__(
-            "ccx",
-            3,
-            [],
-            num_ctrl_qubits=2,
-            label=label,
-            ctrl_state=ctrl_state,
-            base_gate=XGate(label=_base_label),
+            "ccx", 3, [], num_ctrl_qubits=2, label=label, ctrl_state=ctrl_state, base_gate=XGate()
         )
 
     def _define(self):
@@ -393,12 +359,8 @@ class CCXGate(ControlledGate):
         """
         ctrl_state = _ctrl_state_to_int(ctrl_state, num_ctrl_qubits)
         new_ctrl_state = (self.ctrl_state << num_ctrl_qubits) | ctrl_state
-        gate = MCXGate(
-            num_ctrl_qubits=num_ctrl_qubits + 2,
-            label=label,
-            ctrl_state=new_ctrl_state,
-            _base_label=self.label,
-        )
+        gate = MCXGate(num_ctrl_qubits=num_ctrl_qubits + 2, label=label, ctrl_state=new_ctrl_state)
+        gate.base_gate.label = self.label
         return gate
 
     def inverse(self):
@@ -418,7 +380,7 @@ class CCXGate(ControlledGate):
         [0, 0, 0, 1j, 0, 0, 0, 0],
     ]
 )
-class RCCXGate(SingletonGate):
+class RCCXGate(Gate):
     """The simplified Toffoli gate, also referred to as Margolus gate.
 
     The simplified Toffoli gate implements the Toffoli gate up to relative phases.
@@ -434,13 +396,9 @@ class RCCXGate(SingletonGate):
     with the :meth:`~qiskit.circuit.QuantumCircuit.rccx` method.
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create a new simplified CCX gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "rccx", 3, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("rccx", 3, [], label=label)
 
     def _define(self):
         """
@@ -717,7 +675,7 @@ class C3XGate(ControlledGate):
         [0, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0],
     ]
 )
-class RC3XGate(SingletonGate):
+class RC3XGate(Gate):
     """The simplified 3-controlled Toffoli gate.
 
     The simplified Toffoli gate implements the Toffoli gate up to relative phases.
@@ -731,13 +689,9 @@ class RC3XGate(SingletonGate):
     with the :meth:`~qiskit.circuit.QuantumCircuit.rcccx` method.
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create a new RC3X gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "rcccx", 4, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("rcccx", 4, [], label=label)
 
     def _define(self):
         """
@@ -901,7 +855,6 @@ class MCXGate(ControlledGate):
         num_ctrl_qubits: Optional[int] = None,
         label: Optional[str] = None,
         ctrl_state: Optional[Union[str, int]] = None,
-        _base_label=None,
     ):
         """Create a new MCX instance.
 
@@ -913,11 +866,9 @@ class MCXGate(ControlledGate):
         explicit: dict[int, Type[ControlledGate]] = {1: CXGate, 2: CCXGate}
         if num_ctrl_qubits in explicit:
             gate_class = explicit[num_ctrl_qubits]
-            gate = gate_class.__new__(
-                gate_class, label=label, ctrl_state=ctrl_state, _base_label=_base_label
-            )
+            gate = gate_class.__new__(gate_class, label=label, ctrl_state=ctrl_state)
             # if __new__ does not return the same type as cls, init is not called
-            gate.__init__(label=label, ctrl_state=ctrl_state, _base_label=_base_label)
+            gate.__init__(label=label, ctrl_state=ctrl_state)
             return gate
         return super().__new__(cls)
 
@@ -927,7 +878,6 @@ class MCXGate(ControlledGate):
         label: Optional[str] = None,
         ctrl_state: Optional[Union[str, int]] = None,
         _name="mcx",
-        _base_label=None,
     ):
         """Create new MCX gate."""
         num_ancilla_qubits = self.__class__.get_num_ancilla_qubits(num_ctrl_qubits)
@@ -938,7 +888,7 @@ class MCXGate(ControlledGate):
             num_ctrl_qubits=num_ctrl_qubits,
             label=label,
             ctrl_state=ctrl_state,
-            base_gate=XGate(label=_base_label),
+            base_gate=XGate(),
         )
 
     def inverse(self):
@@ -1013,7 +963,6 @@ class MCXGrayCode(MCXGate):
         num_ctrl_qubits: Optional[int] = None,
         label: Optional[str] = None,
         ctrl_state: Optional[Union[str, int]] = None,
-        _base_label=None,
     ):
         """Create a new MCXGrayCode instance"""
         # if 1 to 4 control qubits, create explicit gates

@@ -17,7 +17,7 @@ from typing import Optional, Union
 
 # pylint: disable=cyclic-import
 from qiskit.circuit.controlledgate import ControlledGate
-from qiskit.circuit.singleton_gate import SingletonGate
+from qiskit.circuit.gate import Gate
 from qiskit.circuit.quantumregister import QuantumRegister
 from qiskit.circuit._utils import with_gate_array, with_controlled_gate_array
 
@@ -25,7 +25,7 @@ _Y_ARRAY = [[0, -1j], [1j, 0]]
 
 
 @with_gate_array(_Y_ARRAY)
-class YGate(SingletonGate):
+class YGate(Gate):
     r"""The single-qubit Pauli-Y gate (:math:`\sigma_y`).
 
     Can be applied to a :class:`~qiskit.circuit.QuantumCircuit`
@@ -71,13 +71,9 @@ class YGate(SingletonGate):
         |1\rangle \rightarrow -i|0\rangle
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create new Y gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "y", 1, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("y", 1, [], label=label)
 
     def _define(self):
         # pylint: disable=cyclic-import
@@ -112,7 +108,8 @@ class YGate(SingletonGate):
             ControlledGate: controlled version of this gate.
         """
         if num_ctrl_qubits == 1:
-            gate = CYGate(label=label, ctrl_state=ctrl_state, _base_label=self.label)
+            gate = CYGate(label=label, ctrl_state=ctrl_state)
+            gate.base_gate.label = self.label
             return gate
         return super().control(num_ctrl_qubits=num_ctrl_qubits, label=label, ctrl_state=ctrl_state)
 
@@ -178,21 +175,10 @@ class CYGate(ControlledGate):
 
     """
 
-    def __init__(
-        self,
-        label: Optional[str] = None,
-        ctrl_state: Optional[Union[str, int]] = None,
-        _base_label=None,
-    ):
+    def __init__(self, label: Optional[str] = None, ctrl_state: Optional[Union[str, int]] = None):
         """Create new CY gate."""
         super().__init__(
-            "cy",
-            2,
-            [],
-            num_ctrl_qubits=1,
-            label=label,
-            ctrl_state=ctrl_state,
-            base_gate=YGate(label=_base_label),
+            "cy", 2, [], num_ctrl_qubits=1, label=label, ctrl_state=ctrl_state, base_gate=YGate()
         )
 
     def _define(self):

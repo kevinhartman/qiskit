@@ -96,14 +96,13 @@ class TimeUnitConversion(TransformationPass):
         # Make units consistent
         for node in dag.op_nodes():
             try:
-                duration = self.inst_durations.get(
+                node.op = node.op.copy()
+                node.op.duration = self.inst_durations.get(
                     node.op, [dag.find_bit(qarg).index for qarg in node.qargs], unit=time_unit
                 )
+                node.op.unit = time_unit
             except TranspilerError:
-                continue
-            node.op = node.op.to_mutable()
-            node.op.duration = duration
-            node.op.unit = time_unit
+                pass
 
         self.property_set["time_unit"] = time_unit
         return dag

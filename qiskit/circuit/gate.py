@@ -24,15 +24,7 @@ from .instruction import Instruction
 class Gate(Instruction):
     """Unitary gate."""
 
-    def __init__(
-        self,
-        name: str,
-        num_qubits: int,
-        params: list,
-        label: str | None = None,
-        duration=None,
-        unit="dt",
-    ) -> None:
+    def __init__(self, name: str, num_qubits: int, params: list, label: str | None = None) -> None:
         """Create a new gate.
 
         Args:
@@ -42,7 +34,7 @@ class Gate(Instruction):
             label: An optional label for the gate.
         """
         self.definition = None
-        super().__init__(name, num_qubits, 0, params, label=label, duration=duration, unit=unit)
+        super().__init__(name, num_qubits, 0, params, label=label)
 
     # Set higher priority than Numpy array and matrix classes
     __array_priority__ = 20

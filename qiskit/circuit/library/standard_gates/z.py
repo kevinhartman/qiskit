@@ -19,7 +19,7 @@ import numpy
 
 from qiskit.circuit._utils import with_gate_array, with_controlled_gate_array
 from qiskit.circuit.controlledgate import ControlledGate
-from qiskit.circuit.singleton_gate import SingletonGate
+from qiskit.circuit.gate import Gate
 from qiskit.circuit.quantumregister import QuantumRegister
 
 from .p import PhaseGate
@@ -28,7 +28,7 @@ _Z_ARRAY = [[1, 0], [0, -1]]
 
 
 @with_gate_array(_Z_ARRAY)
-class ZGate(SingletonGate):
+class ZGate(Gate):
     r"""The single-qubit Pauli-Z gate (:math:`\sigma_z`).
 
     Can be applied to a :class:`~qiskit.circuit.QuantumCircuit`
@@ -74,13 +74,9 @@ class ZGate(SingletonGate):
         |1\rangle \rightarrow -|1\rangle
     """
 
-    def __init__(self, label: Optional[str] = None, duration=None, unit=None, _condition=None):
+    def __init__(self, label: Optional[str] = None):
         """Create new Z gate."""
-        if unit is None:
-            unit = "dt"
-        super().__init__(
-            "z", 1, [], label=label, _condition=_condition, duration=duration, unit=unit
-        )
+        super().__init__("z", 1, [], label=label)
 
     def _define(self):
         # pylint: disable=cyclic-import
@@ -116,7 +112,8 @@ class ZGate(SingletonGate):
             ControlledGate: controlled version of this gate.
         """
         if num_ctrl_qubits == 1:
-            gate = CZGate(label=label, ctrl_state=ctrl_state, _base_label=self.label)
+            gate = CZGate(label=label, ctrl_state=ctrl_state)
+            gate.base_gate.label = self.label
             return gate
         return super().control(num_ctrl_qubits=num_ctrl_qubits, label=label, ctrl_state=ctrl_state)
 
@@ -163,21 +160,10 @@ class CZGate(ControlledGate):
     the target qubit if the control qubit is in the :math:`|1\rangle` state.
     """
 
-    def __init__(
-        self,
-        label: Optional[str] = None,
-        ctrl_state: Optional[Union[str, int]] = None,
-        _base_label=None,
-    ):
+    def __init__(self, label: Optional[str] = None, ctrl_state: Optional[Union[str, int]] = None):
         """Create new CZ gate."""
         super().__init__(
-            "cz",
-            2,
-            [],
-            label=label,
-            num_ctrl_qubits=1,
-            ctrl_state=ctrl_state,
-            base_gate=ZGate(label=_base_label),
+            "cz", 2, [], label=label, num_ctrl_qubits=1, ctrl_state=ctrl_state, base_gate=ZGate()
         )
 
     def _define(self):

@@ -609,7 +609,8 @@ class TestLoadFromQPY(QiskitTestCase):
     def test_standard_gate_with_label(self):
         """Test a standard gate with a label."""
         qc = QuantumCircuit(1)
-        gate = XGate(label="My special X gate")
+        gate = XGate()
+        gate.label = "My special X gate"
         qc.append(gate, [0])
         qpy_file = io.BytesIO()
         dump(qc, qpy_file)

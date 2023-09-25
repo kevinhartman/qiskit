@@ -25,11 +25,10 @@ import numpy as np
 
 from qiskit import circuit as circuit_mod
 from qiskit import extensions
-from qiskit.circuit import library, controlflow, CircuitInstruction, ControlFlowOp
+from qiskit.circuit import library, controlflow, CircuitInstruction
 from qiskit.circuit.classical import expr
 from qiskit.circuit.classicalregister import ClassicalRegister, Clbit
 from qiskit.circuit.gate import Gate
-from qiskit.circuit.singleton_gate import SingletonGate
 from qiskit.circuit.controlledgate import ControlledGate
 from qiskit.circuit.instruction import Instruction
 from qiskit.circuit.quantumcircuit import QuantumCircuit
@@ -273,10 +272,8 @@ def _read_instruction(file_obj, circuit, registers, custom_operations, version, 
     else:
         raise AttributeError("Invalid instruction type: %s" % gate_name)
 
-    if instruction.label_size <= 0:
-        label = None
     if gate_name in {"IfElseOp", "WhileLoopOp"}:
-        gate = gate_class(condition, *params, label=label)
+        gate = gate_class(condition, *params)
     elif version >= 5 and issubclass(gate_class, ControlledGate):
         if gate_name in {
             "MCPhaseGate",
@@ -286,9 +283,9 @@ def _read_instruction(file_obj, circuit, registers, custom_operations, version, 
             "MCXRecursive",
             "MCXVChain",
         }:
-            gate = gate_class(*params, instruction.num_ctrl_qubits, label=label)
+            gate = gate_class(*params, instruction.num_ctrl_qubits)
         else:
-            gate = gate_class(*params, label=label)
+            gate = gate_class(*params)
             gate.num_ctrl_qubits = instruction.num_ctrl_qubits
             gate.ctrl_state = instruction.ctrl_state
         gate.condition = condition
@@ -307,19 +304,10 @@ def _read_instruction(file_obj, circuit, registers, custom_operations, version, 
                 params = [len(qargs)]
             elif gate_name in {"BreakLoopOp", "ContinueLoopOp"}:
                 params = [len(qargs), len(cargs)]
-            if label is not None:
-                if issubclass(gate_class, SingletonGate):
-                    gate = gate_class(*params, label=label)
-                else:
-                    gate = gate_class(*params)
-                    gate.label = label
-            else:
-                gate = gate_class(*params)
-        if condition:
-            if not isinstance(gate, ControlFlowOp):
-                gate = gate.c_if(*condition)
-            else:
-                gate.condition = condition
+            gate = gate_class(*params)
+        gate.condition = condition
+    if instruction.label_size > 0:
+        gate.label = label
     if circuit is None:
         return gate
     if not isinstance(gate, Instruction):
