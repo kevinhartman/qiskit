@@ -522,19 +522,6 @@ class QuantumCircuit:
             other, copy_operations=False
         )
 
-    def __getstate__(self):
-        # Rust's CircuitData is not picklable, so we convert it to a list first.
-        state = self.__dict__.copy()
-        state["_data"] = list(self._data)
-        del state["_intern_context"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__ = state
-        self._intern_context = InternContext()
-        data = self._new_data(self._data)
-        self._data = data
-
     @classmethod
     def _increment_instances(cls):
         cls.instances += 1

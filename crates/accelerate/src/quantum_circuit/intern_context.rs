@@ -15,6 +15,7 @@ use pyo3::prelude::*;
 use std::collections::VecDeque;
 use std::mem::take;
 use std::sync::Arc;
+use pyo3::types::{PyList, PyTuple};
 
 pub type IndexType = u32;
 pub type BitType = u32;
@@ -111,6 +112,32 @@ impl InternContext {
         str.push_str("  free_slots:\n");
         str.push_str(&*format!("    {:?}", self.free_slots));
         str.into_py(py)
+    }
+
+    fn __getstate__(&self, py: Python<'_>) -> PyObject {
+        (
+            PyList::new(py, self.slots.iter().map(|o| o.as_ref().map(|s| {
+                (PyList::new(py, s.operands.as_ref().iter()), s.use_count)
+            }))),
+            PyList::new(py, self.free_slots.iter())
+        ).into_py(py)
+    }
+
+    fn __setstate__(&mut self, state: &PyTuple) -> PyResult<()> {
+        for (idx, slot) in state.get_item(0)?.iter()?.enumerate() {
+            let slot: Option<(Vec<BitType>, usize)> = slot?.extract()?;
+            self.slots.push(slot.map(|(ops, use_count)| {
+                let operands = Arc::new(ops);
+                self.slot_lookup.insert(operands.clone(), idx.try_into().unwrap());
+                SharedOperandList {
+                    operands,
+                    use_count
+                }
+            }));
+        }
+        self.free_slots = state.get_item(1)?.iter()?.map(|i| i?.extract()).collect::<PyResult<VecDeque<IndexType>>>()?;
+
+        Ok(())
     }
 }
 

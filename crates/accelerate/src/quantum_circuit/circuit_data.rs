@@ -23,7 +23,7 @@ use std::iter::zip;
 use std::mem::swap;
 
 // Private type use to store instructions with interned arg lists.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, FromPyObject)]
 struct InternedInstruction(Option<PyObject>, IndexType, IndexType);
 
 #[pyclass(sequence, module = "qiskit._accelerate.quantum_circuit")]
@@ -267,6 +267,38 @@ impl CircuitData {
             *op = None;
         }
         self.new_callable = None;
+    }
+
+    fn __getstate__(&self, py: Python<'_>) -> PyObject {
+        (
+            PyList::new(py, self.data.iter().map(|i| (i.0.as_ref().unwrap(), i.1, i.2))),
+            self.intern_context.clone(),
+            self.new_callable.as_ref().unwrap().clone(),
+            self.qubits.clone(),
+            self.clbits.clone(),
+            self.qubit_indices.clone(),
+            self.clbit_indices.clone()
+        ).into_py(py)
+    }
+
+    fn __setstate__(&mut self, _py:Python<'_>, state: &PyTuple) -> PyResult<()> {
+        self.data = state.get_item(0)?.extract()?;
+        self.intern_context = state.get_item(1)?.extract()?;
+        self.new_callable = Some(state.get_item(2)?.extract()?);
+        self.qubits = state.get_item(3)?.extract()?;
+        self.clbits = state.get_item(4)?.extract()?;
+        self.qubit_indices = state.get_item(5)?.extract()?;
+        self.clbit_indices = state.get_item(6)?.extract()?;
+        Ok(())
+    }
+
+    pub fn __getnewargs__(&self, py: Python<'_>) -> PyResult<PyObject> {
+        Ok((self.intern_context.clone(),
+            self.new_callable.as_ref().unwrap().clone(),
+            self.qubits.clone(),
+            self.clbits.clone(),
+            self.qubit_indices.clone(),
+            self.clbit_indices.clone()).into_py(py))
     }
 }
 
