@@ -262,23 +262,23 @@ impl CircuitData {
         }
     }
 
-    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        for InternedInstruction(op, _, _) in self.data.iter() {
-            visit.call(op)?;
-        }
-        visit.call(&self.qubits)?;
-        visit.call(&self.clbits)?;
-        visit.call(&self.qubit_indices)?;
-        visit.call(&self.clbit_indices)?;
-        Ok(())
-    }
-
-    fn __clear__(&mut self) {
-        // Clear anything that could have a reference cycle.
-        for InternedInstruction(op, _, _) in self.data.iter_mut() {
-            *op = None;
-        }
-    }
+    // fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+    //     for InternedInstruction(op, _, _) in self.data.iter() {
+    //         visit.call(op)?;
+    //     }
+    //     visit.call(&self.qubits)?;
+    //     visit.call(&self.clbits)?;
+    //     visit.call(&self.qubit_indices)?;
+    //     visit.call(&self.clbit_indices)?;
+    //     Ok(())
+    // }
+    //
+    // fn __clear__(&mut self) {
+    //     // Clear anything that could have a reference cycle.
+    //     for InternedInstruction(op, _, _) in self.data.iter_mut() {
+    //         *op = None;
+    //     }
+    // }
 }
 
 enum IndexFor {
@@ -394,8 +394,8 @@ impl CircuitData {
     }
 }
 
-impl Drop for CircuitData {
-    fn drop(&mut self) {
-        Python::with_gil(|py| self.clear(py)).unwrap();
-    }
-}
+// impl Drop for CircuitData {
+//     fn drop(&mut self) {
+//         Python::with_gil(|py| self.clear(py)).unwrap();
+//     }
+// }
