@@ -29,7 +29,7 @@ struct SharedOperandList {
 #[derive(Clone, Debug)]
 pub struct InternContext {
     slots: Vec<Option<SharedOperandList>>,
-    free_slots: VecDeque<IndexType>,
+    free_slots: Vec<IndexType>,
     slot_lookup: HashMap<Arc<Vec<BitType>>, IndexType>,
 }
 
@@ -45,7 +45,7 @@ impl InternContext {
 
         let slot_idx = self.slot_lookup.entry(args.clone()).or_insert_with(|| {
             if !self.free_slots.is_empty() {
-                self.free_slots.pop_front().unwrap()
+                self.free_slots.pop().unwrap()
             } else {
                 let slot = self.slots.len();
                 self.slots.push(None);
@@ -70,6 +70,7 @@ impl InternContext {
     }
 
     pub fn drop_use(&mut self, slot_idx: IndexType) {
+        return;
         let mut shared = take(&mut self.slots[slot_idx as usize]).unwrap();
         if let SharedOperandList {
             operands,
@@ -77,7 +78,7 @@ impl InternContext {
         } = shared
         {
             self.slot_lookup.remove(&operands);
-            self.free_slots.push_back(slot_idx);
+            self.free_slots.push(slot_idx);
             return;
         };
         shared.use_count -= 1;
@@ -91,7 +92,7 @@ impl InternContext {
     pub fn new() -> Self {
         InternContext {
             slots: Vec::new(),
-            free_slots: VecDeque::new(),
+            free_slots: Vec::new(),
             slot_lookup: HashMap::new(),
         }
     }
