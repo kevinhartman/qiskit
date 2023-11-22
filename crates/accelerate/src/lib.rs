@@ -32,6 +32,7 @@ mod sampled_exp_val;
 mod sparse_pauli_op;
 mod stochastic_swap;
 mod vf2_layout;
+mod quantum_info;
 
 #[inline]
 pub fn getenv_use_multiple_threads() -> bool {
@@ -54,6 +55,7 @@ fn _accelerate(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_wrapped(wrap_pymodule!(pauli_exp_val::pauli_expval))?;
     m.add_wrapped(wrap_pymodule!(dense_layout::dense_layout))?;
     m.add_wrapped(wrap_pymodule!(quantum_circuit::quantum_circuit))?;
+    m.add_wrapped(wrap_pymodule!(quantum_info::quantum_info))?;
     m.add_wrapped(wrap_pymodule!(error_map::error_map))?;
     m.add_wrapped(wrap_pymodule!(sparse_pauli_op::sparse_pauli_op))?;
     m.add_wrapped(wrap_pymodule!(results::results))?;
