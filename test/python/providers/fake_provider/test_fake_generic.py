@@ -10,20 +10,20 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-""" Test of GenericFakeBackend backend"""
+"""Tests for fake_generic.py"""
 
 import math
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit import transpile
-from qiskit.providers.fake_provider import GenericFakeBackend
+from qiskit.providers.fake_provider import make_generic_backend
 from qiskit.transpiler import CouplingMap
 from qiskit.exceptions import QiskitError
 from qiskit.test import QiskitTestCase
 
 
-class TestGenericFakeBackend(QiskitTestCase):
-    """Test class for GenericFakeBackend backend"""
+class TestMakeGenericBackend(QiskitTestCase):
+    """Test class for make_generic_backend function"""
 
     def setUp(self):
         super().setUp()
@@ -34,17 +34,17 @@ class TestGenericFakeBackend(QiskitTestCase):
     def test_supported_basis_gates(self):
         """Test that target raises error if basis_gate not in ``supported_names``."""
         with self.assertRaises(QiskitError):
-            GenericFakeBackend(num_qubits=8, basis_gates=["cx", "id", "rz", "sx", "zz"])
+            make_generic_backend(num_qubits=8, basis_gates=["cx", "id", "rz", "sx", "zz"])
 
     def test_operation_names(self):
         """Test that target basis gates include "delay", "measure" and "reset" even
         if not provided by user."""
-        target = GenericFakeBackend(num_qubits=8)
+        target = make_generic_backend(num_qubits=8)
         op_names = list(target.operation_names)
         op_names.sort()
         self.assertEqual(op_names, ["cx", "delay", "id", "measure", "reset", "rz", "sx", "x"])
 
-        target = GenericFakeBackend(num_qubits=8, basis_gates=["ecr", "id", "rz", "sx", "x"])
+        target = make_generic_backend(num_qubits=8, basis_gates=["ecr", "id", "rz", "sx", "x"])
         op_names = list(target.operation_names)
         op_names.sort()
         self.assertEqual(op_names, ["delay", "ecr", "id", "measure", "reset", "rz", "sx", "x"])
@@ -52,11 +52,11 @@ class TestGenericFakeBackend(QiskitTestCase):
     def test_incompatible_coupling_map(self):
         """Test that the size of the coupling map must match num_qubits."""
         with self.assertRaises(QiskitError):
-            GenericFakeBackend(num_qubits=5, coupling_map=self.cmap)
+            make_generic_backend(num_qubits=5, coupling_map=self.cmap)
 
     def test_control_flow_operation_names(self):
         """Test that control flow instructions are added to the target if control_flow is True."""
-        target = GenericFakeBackend(
+        target = make_generic_backend(
             num_qubits=8,
             basis_gates=["ecr", "id", "rz", "sx", "x"],
             coupling_map=self.cmap,
@@ -90,7 +90,7 @@ class TestGenericFakeBackend(QiskitTestCase):
                           (1, 3), (3, 1), (1, 4), (4, 1), (2, 3), (3, 2), (2, 4), (4, 2), (3, 4), (4, 3)]
         # fmt: on
         self.assertEqual(
-            list(GenericFakeBackend(num_qubits=5).coupling_map.get_edges()),
+            list(make_generic_backend(num_qubits=5).coupling_map.get_edges()),
             reference_cmap,
         )
 
@@ -105,7 +105,7 @@ class TestGenericFakeBackend(QiskitTestCase):
             qc.cx(qr[0], qr[k])
         qc.measure(qr, cr)
 
-        backend = GenericFakeBackend(num_qubits=5, basis_gates=["cx", "id", "rz", "sx", "x"])
+        backend = make_generic_backend(num_qubits=5, basis_gates=["cx", "id", "rz", "sx", "x"])
         tqc = transpile(qc, backend=backend, optimization_level=3, seed_transpiler=42)
         result = backend.run(tqc, seed_simulator=42, shots=1000).result()
         counts = result.get_counts()
