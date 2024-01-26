@@ -1,7 +1,7 @@
 ---
 features:
   - |
-    A new function, :func:`.make_generic_backend` has been added to the :mod:`qiskit.providers.fake_provider`
+    A new function, :func:`.make_generic_backend` has been added to the :mod:`qiskit.providers.utils`
     module. This function generates customized :class:`~.BackendV2` instances which run locally via a
     the Aer simulator (if installed) or else using :class:`~.BasicAer`.
     Users can configure the number of qubits, basis gates, coupling map,
@@ -13,7 +13,7 @@ features:
     Example usage 1::
 
       from qiskit import QuantumCircuit, transpile
-      from qiskit.providers.fake_provider import make_generic_backend
+      from qiskit.providers.utils import make_generic_backend
 
       # Create a simple circuit
       circuit = QuantumCircuit(3)
@@ -33,7 +33,7 @@ features:
     Example usage 2::
 
       from qiskit import QuantumCircuit, ClassicalRegister, transpile
-      from qiskit.providers.fake_provider import make_generic_backend
+      from qiskit.providers.utils import make_generic_backend
 
       # Create a circuit with classical control
       creg = ClassicalRegister(19)
