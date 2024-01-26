@@ -1,6 +1,6 @@
 # This code is part of Qiskit.
 #
-# (C) Copyright IBM 2023.
+# (C) Copyright IBM 2023, 2024.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -21,7 +21,7 @@ import numpy as np
 from qiskit import pulse
 from qiskit.circuit import QuantumCircuit
 from qiskit.exceptions import QiskitError
-from qiskit.transpiler import Target, CouplingMap
+from qiskit.transpiler import Target
 from qiskit.providers import Options
 from qiskit.providers.basicaer import BasicAer
 from qiskit.providers.backend import BackendV2
