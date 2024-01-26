@@ -71,12 +71,12 @@ from qiskit.converters import circuit_to_dag
 from qiskit.dagcircuit import DAGOpNode, DAGOutNode
 from qiskit.exceptions import QiskitError
 from qiskit.providers.backend import BackendV2
-from qiskit.providers.fake_provider import make_generic_backend
 from qiskit.providers.fake_provider import (
     FakeMelbourne,
     FakeRueschlikon,
     FakeVigo,
 )
+from qiskit.providers.utils import make_generic_backend
 from qiskit.providers.options import Options
 from qiskit.pulse import InstructionScheduleMap
 from qiskit.quantum_info import Operator, random_unitary

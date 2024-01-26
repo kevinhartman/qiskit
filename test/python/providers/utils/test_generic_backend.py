@@ -10,13 +10,13 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-"""Tests for fake_generic.py"""
+"""Tests for generic backend construction."""
 
 import math
 
 from qiskit import ClassicalRegister, QuantumCircuit, QuantumRegister
 from qiskit import transpile
-from qiskit.providers.fake_provider import make_generic_backend
+from qiskit.providers.utils import make_generic_backend
 from qiskit.transpiler import CouplingMap
 from qiskit.exceptions import QiskitError
 from qiskit.test import QiskitTestCase

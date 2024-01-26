@@ -17,7 +17,6 @@ from __future__ import annotations
 import numpy as np
 from numpy.random import Generator
 
-from .simulator_backend import _SimulatorBackend
 
 from qiskit.pulse.instruction_schedule_map import InstructionScheduleMap
 from qiskit.circuit import Instruction
@@ -37,6 +36,7 @@ from qiskit.providers.models import (
     PulseDefaults,
     Command,
 )
+from qiskit.providers.simulator_backend import _SimulatorBackend
 from qiskit.qobj import PulseQobjInstruction, PulseLibraryItem
 
 # Noise default values/ranges for duration and error of supported

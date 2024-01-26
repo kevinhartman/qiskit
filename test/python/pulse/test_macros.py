@@ -24,7 +24,8 @@ from qiskit.pulse import (
 )
 from qiskit.pulse import macros
 from qiskit.pulse.exceptions import PulseError
-from qiskit.providers.fake_provider import FakeOpenPulse2Q, FakeHanoi, make_generic_backend
+from qiskit.providers.fake_provider import FakeOpenPulse2Q, FakeHanoi
+from qiskit.providers.utils import make_generic_backend
 from qiskit.test import QiskitTestCase
 
 
