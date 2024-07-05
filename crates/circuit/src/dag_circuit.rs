@@ -40,7 +40,9 @@ use rustworkx_core::err::ContractError;
 use rustworkx_core::graph_ext::ContractNodesDirected;
 use rustworkx_core::petgraph;
 use rustworkx_core::petgraph::prelude::StableDiGraph;
-use rustworkx_core::petgraph::stable_graph::{DefaultIx, IndexType, Neighbors, NodeIndex};
+use rustworkx_core::petgraph::stable_graph::{
+    DefaultIx, EdgeReference, IndexType, Neighbors, NodeIndex,
+};
 use rustworkx_core::petgraph::visit::{IntoNodeReferences, NodeCount, NodeRef};
 use rustworkx_core::petgraph::Incoming;
 use rustworkx_core::traversal::{
@@ -2551,25 +2553,64 @@ def _format(operand):
     /// Raises:
     ///     DAGCircuitError: if either node is not an OpNode or nodes are not connected
     fn swap_nodes(&mut self, node1: &DAGNode, node2: &DAGNode) -> PyResult<()> {
-        // if not (isinstance(node1, DAGOpNode) and isinstance(node2, DAGOpNode)):
-        //     raise DAGCircuitError("nodes to swap are not both DAGOpNodes")
-        // try:
-        //     connected_edges = self._multi_graph.get_all_edge_data(node1._node_id, node2._node_id)
-        // except rx.NoEdgeBetweenNodes as no_common_edge:
-        //     raise DAGCircuitError("attempt to swap unconnected nodes") from no_common_edge
-        // node1_id = node1._node_id
-        // node2_id = node2._node_id
-        // for edge in connected_edges[::-1]:
-        //     edge_find = lambda x, y=edge: x == y
-        //     edge_parent = self._multi_graph.find_predecessors_by_edge(node1_id, edge_find)[0]
-        //     self._multi_graph.remove_edge(edge_parent._node_id, node1_id)
-        //     self._multi_graph.add_edge(edge_parent._node_id, node2_id, edge)
-        //     edge_child = self._multi_graph.find_successors_by_edge(node2_id, edge_find)[0]
-        //     self._multi_graph.remove_edge(node1_id, node2_id)
-        //     self._multi_graph.add_edge(node2_id, node1_id, edge)
-        //     self._multi_graph.remove_edge(node2_id, edge_child._node_id)
-        //     self._multi_graph.add_edge(node1_id, edge_child._node_id, edge)
-        todo!()
+        let node1 = node1.node.unwrap();
+        let node2 = node2.node.unwrap();
+        let dag_binding = self.dag.clone();
+
+        // extracted functionality from get_edge_data. Had to collect to be able
+        // to reverse the iterator in the for loop.
+        let connected_edges = dag_binding
+            .edges(node1)
+            .filter(|edge| edge.target() == node2)
+            .map(|edge| edge)
+            .collect::<Vec<_>>();
+
+        // see: https://en.wikipedia.org/wiki/Oyakodon
+        let find_oyako_by_edge =
+            |(node, direction, ref_edge): (NodeIndex, Direction, EdgeReference<Wire>)| {
+                let mut oyakosan = Vec::new();
+                let mut used_indices: HashSet<NodeIndex> = HashSet::new();
+                let raw_edges = dag_binding.edges_directed(node, direction);
+
+                for edge in raw_edges {
+                    let oyako = match direction {
+                        Incoming => edge.source(),
+                        Outgoing => edge.target(),
+                    };
+                    if !used_indices.contains(&oyako) {
+                        if ref_edge.weight() == edge.weight() {
+                            used_indices.insert(oyako);
+                            oyakosan.push(edge);
+                        }
+                    }
+                }
+                oyakosan
+            };
+
+        // 0 confidence that I am adding and removing the right edges here.
+        // Leaving the corresponding Python lines for reference
+        for edge in connected_edges.iter().rev() {
+            // edge_parent = self._multi_graph.find_predecessors_by_edge(node1_id, edge_find)[0]
+            let edge_parent = find_oyako_by_edge((node1, Incoming, *edge))[0];
+            // self._multi_graph.remove_edge(edge_parent._node_id, node1_id)
+            self.dag.remove_edge(edge_parent.id());
+            //self._multi_graph.add_edge(edge_parent._node_id, node2_id, edge)
+            self.dag
+                .add_edge(edge_parent.source(), node2, *edge.weight());
+            // edge_child = self._multi_graph.find_successors_by_edge(node2_id, edge_find)[0]
+            let edge_child = find_oyako_by_edge((node2, Outgoing, *edge))[0];
+            // self._multi_graph.remove_edge(node1_id, node2_id)
+            self.dag
+                .remove_edge(self.dag.edges_connecting(node1, node2).collect::<Vec<_>>()[0].id());
+            //     self._multi_graph.add_edge(node2_id, node1_id, edge)
+            self.dag.add_edge(node2, node1, *edge.weight());
+            //     self._multi_graph.remove_edge(node2_id, edge_child._node_id)
+            self.dag.remove_edge(edge_child.id());
+            //     self._multi_graph.add_edge(node1_id, edge_child._node_id, edge)
+            self.dag
+                .add_edge(node1, edge_parent.target(), *edge.weight());
+        }
+        Ok(())
     }
 
     /// Get the node in the dag.
