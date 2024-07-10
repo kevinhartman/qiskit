@@ -689,7 +689,7 @@ class _OldDAGCircuit:
         Returns:
             DAGCircuit: An empty copy of self.
         """
-        target_dag = DAGCircuit()
+        target_dag = _OldDAGCircuit()
         target_dag.name = self.name
         target_dag._global_phase = self._global_phase
         target_dag.duration = self.duration
