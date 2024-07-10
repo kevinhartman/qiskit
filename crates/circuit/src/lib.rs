@@ -20,6 +20,7 @@ pub mod parameter_table;
 
 mod bit_data;
 mod dag_node;
+mod dot_utils;
 mod error;
 mod interner;
 

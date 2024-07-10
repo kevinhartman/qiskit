@@ -15,7 +15,9 @@
 """
 Visualization function for DAG circuit representation.
 """
-from rustworkx.visualization import graphviz_draw
+
+import io
+import subprocess
 
 from qiskit.dagcircuit.dagnode import DAGOpNode, DAGInNode, DAGOutNode
 from qiskit.circuit import Qubit, Clbit, ClassicalRegister
@@ -27,6 +29,7 @@ from .exceptions import VisualizationError
 
 
 @_optionals.HAS_GRAPHVIZ.require_in_call
+@_optionals.HAS_PIL.require_in_call
 def dag_drawer(dag, scale=0.7, filename=None, style="color"):
     """Plot the directed acyclic graph (dag) to represent operation dependencies
     in a quantum circuit.
@@ -69,6 +72,7 @@ def dag_drawer(dag, scale=0.7, filename=None, style="color"):
             dag = circuit_to_dag(circ)
             dag_drawer(dag)
     """
+    from PIL import Image
 
     # NOTE: use type str checking to avoid potential cyclical import
     # the two tradeoffs ere that it will not handle subclasses and it is
@@ -213,11 +217,32 @@ def dag_drawer(dag, scale=0.7, filename=None, style="color"):
         if "." not in filename:
             raise InvalidFileError("Parameter 'filename' must be in format 'name.extension'")
         image_type = filename.split(".")[-1]
-    return graphviz_draw(
-        dag._multi_graph,
+
+    dot_str = dag._to_dot(
+        graph_attrs,
         node_attr_func,
         edge_attr_func,
-        graph_attrs,
-        filename,
-        image_type,
     )
+
+    prog = "dot"
+    if not filename:
+        dot_result = subprocess.run(
+            [prog, "-T", image_type],
+            input=dot_str.encode("utf-8"),
+            capture_output=True,
+            encoding=None,
+            check=True,
+            text=False,
+        )
+        dot_bytes_image = io.BytesIO(dot_result.stdout)
+        image = Image.open(dot_bytes_image)
+        return image
+    else:
+        subprocess.run(
+            [prog, "-T", image_type, "-o", filename],
+            input=dot_str,
+            check=True,
+            encoding="utf8",
+            text=True,
+        )
+        return None

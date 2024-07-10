@@ -16,6 +16,7 @@ use crate::circuit_instruction::{
     convert_py_to_operation_type, CircuitInstruction, OperationTypeConstruct,
 };
 use crate::dag_node::{DAGInNode, DAGNode, DAGOpNode, DAGOutNode};
+use crate::dot_utils::build_dot;
 use crate::error::DAGCircuitError;
 use crate::imports::{DAG_NODE, VARIABLE_MAPPER};
 use crate::interner::{Index, IndexedInterner, Interner};
@@ -52,6 +53,7 @@ use rustworkx_core::traversal::{
 use rustworkx_core::connectivity::connected_components as core_connected_components;
 
 use std::borrow::Borrow;
+use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
 use std::f64::consts::PI;
 use std::ffi::c_double;
@@ -102,7 +104,7 @@ where
 }
 
 #[derive(Clone, Debug)]
-enum NodeType {
+pub(crate) enum NodeType {
     QubitIn(Qubit),
     QubitOut(Qubit),
     ClbitIn(Clbit),
@@ -121,7 +123,7 @@ impl NodeType {
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-enum Wire {
+pub(crate) enum Wire {
     Qubit(Qubit),
     Clbit(Clbit),
 }
@@ -140,7 +142,7 @@ pub struct DAGCircuit {
     metadata: Option<Py<PyDict>>,
     calibrations: HashMap<String, Py<PyDict>>,
 
-    dag: StableDiGraph<NodeType, Wire>,
+    pub(crate) dag: StableDiGraph<NodeType, Wire>,
 
     #[pyo3(get)]
     qregs: Py<PyDict>,
@@ -152,9 +154,9 @@ pub struct DAGCircuit {
     /// The cache used to intern instruction cargs.
     cargs_cache: IndexedInterner<Vec<Clbit>>,
     /// Qubits registered in the circuit.
-    qubits: BitData<Qubit>,
+    pub(crate) qubits: BitData<Qubit>,
     /// Clbits registered in the circuit.
-    clbits: BitData<Clbit>,
+    pub(crate) clbits: BitData<Clbit>,
     /// Global phase.
     global_phase: PyObject,
     /// Duration.
@@ -2639,9 +2641,9 @@ def _format(operand):
         Ok(tup.into_any().iter().unwrap().unbind())
     }
 
-    /// Iterator for edge values and source and dest node
+    /// Iterator for edge values with source and destination node.
     ///
-    /// This works by returning the output edges from the specified nodes. If
+    /// This works by returning the outgoing edges from the specified nodes. If
     /// no nodes are specified all edges from the graph are returned.
     ///
     /// Args:
@@ -2650,19 +2652,47 @@ def _format(operand):
     ///         all edges are returned from the graph.
     ///
     /// Yield:
-    ///     edge: the edge in the same format as out_edges the tuple
-    ///         (source node, destination node, edge data)
-    fn edges(&self, nodes: Option<Bound<PyAny>>) -> Py<PyIterator> {
-        // if nodes is None:
-        //     nodes = self._multi_graph.nodes()
-        //
-        // elif isinstance(nodes, (DAGOpNode, DAGInNode, DAGOutNode)):
-        //     nodes = [nodes]
-        // for node in nodes:
-        //     raw_nodes = self._multi_graph.out_edges(node._node_id)
-        //     for source, dest, edge in raw_nodes:
-        //         yield (self._multi_graph[source], self._multi_graph[dest], edge)
-        todo!()
+    ///     edge: the edge as a tuple with the format
+    ///         (source node, destination node, edge wire)
+    fn edges(&self, nodes: Option<Bound<PyAny>>, py: Python) -> PyResult<Py<PyIterator>> {
+        let get_node_index = |obj: &Bound<PyAny>| -> PyResult<NodeIndex> {
+            Ok(obj.downcast::<DAGNode>()?.borrow().node.unwrap())
+        };
+
+        let actual_nodes: Vec<_> = match nodes {
+            None => self.dag.node_indices().collect(),
+            Some(nodes) => {
+                let mut out = Vec::new();
+                if let Ok(node) = get_node_index(&nodes) {
+                    out.push(node);
+                } else {
+                    for node in nodes.iter()? {
+                        out.push(get_node_index(&node?)?);
+                    }
+                }
+                out
+            }
+        };
+
+        let mut edges = Vec::new();
+        for node in actual_nodes {
+            for edge in self.dag.edges_directed(node, Outgoing) {
+                edges.push((
+                    self.get_node(py, edge.source())?,
+                    self.get_node(py, edge.target())?,
+                    match edge.weight() {
+                        Wire::Qubit(qubit) => self.qubits.get(*qubit).unwrap(),
+                        Wire::Clbit(clbit) => self.clbits.get(*clbit).unwrap(),
+                    },
+                ))
+            }
+        }
+
+        Ok(PyTuple::new_bound(py, edges)
+            .into_any()
+            .iter()
+            .unwrap()
+            .unbind())
     }
 
     /// Get the list of "op" nodes in the dag.
@@ -2816,15 +2846,28 @@ def _format(operand):
 
     /// Returns iterator of the predecessors of a node that are
     /// connected by a quantum edge as DAGOpNodes and DAGInNodes.
-    fn quantum_predecessors(&self, py: Python, node: &DAGNode) -> PyResult<Py<PyIterator>> {
-        let edges = self.dag.edges_directed(node.node.unwrap(), Incoming);
-        let filtered = edges.filter_map(|e| match e.weight() {
-            Wire::Qubit(_) => Some(e.source()),
-            _ => None,
-        });
-        let predecessors: PyResult<Vec<_>> =
-            filtered.unique().map(|i| self.get_node(py, i)).collect();
+    #[pyo3(name = "quantum_predecessors")]
+    fn py_quantum_predecessors(&self, py: Python, node: &DAGNode) -> PyResult<Py<PyIterator>> {
+        let predecessors: PyResult<Vec<_>> = self
+            .quantum_predecessors(node.node.unwrap())
+            .map(|i| self.get_node(py, i))
+            .collect();
         Ok(PyTuple::new_bound(py, predecessors?)
+            .into_any()
+            .iter()
+            .unwrap()
+            .unbind())
+    }
+
+    /// Returns iterator of the successors of a node that are
+    /// connected by a quantum edge as DAGOpNodes and DAGOutNodes.
+    #[pyo3(name = "quantum_successors")]
+    fn py_quantum_successors(&self, py: Python, node: &DAGNode) -> PyResult<Py<PyIterator>> {
+        let successors: PyResult<Vec<_>> = self
+            .quantum_successors(node.node.unwrap())
+            .map(|i| self.get_node(py, i))
+            .collect();
+        Ok(PyTuple::new_bound(py, successors?)
             .into_any()
             .iter()
             .unwrap()
@@ -2887,23 +2930,6 @@ def _format(operand):
         Ok(PyList::new_bound(py, successor_index?)
             .into_any()
             .iter()?
-            .unbind())
-    }
-
-    /// Returns iterator of the successors of a node that are
-    /// connected by a quantum edge as DAGOpNodes and DAGOutNodes.
-    fn quantum_successors(&self, py: Python, node: &DAGNode) -> PyResult<Py<PyIterator>> {
-        let edges = self.dag.edges_directed(node.node.unwrap(), Outgoing);
-        let filtered = edges.filter_map(|e| match e.weight() {
-            Wire::Qubit(_) => Some(e.target()),
-            _ => None,
-        });
-        let predecessors: PyResult<Vec<_>> =
-            filtered.unique().map(|i| self.get_node(py, i)).collect();
-        Ok(PyTuple::new_bound(py, predecessors?)
-            .into_any()
-            .iter()
-            .unwrap()
             .unbind())
     }
 
@@ -3087,61 +3113,85 @@ def _format(operand):
     /// in the circuit's basis.
     ///
     /// Nodes must have only one successor to continue the run.
-    fn collect_runs(&self, namelist: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
-        // def filter_fn(node):
-        //     return (
-        //         isinstance(node, DAGOpNode)
-        //         and node.op.name in namelist
-        //         and getattr(node.op, "condition", None) is None
-        //     )
-        //
-        // group_list = rx.collect_runs(self._multi_graph, filter_fn)
-        // return {tuple(x) for x in group_list}
-        todo!()
+    #[pyo3(name = "collect_runs")]
+    fn py_collect_runs(&self, py: Python, namelist: &Bound<PyList>) -> PyResult<Py<PySet>> {
+        let mut name_list_set = HashSet::with_capacity(namelist.len());
+        for name in namelist.iter() {
+            name_list_set.insert(name.extract::<String>()?);
+        }
+        match self.collect_runs(name_list_set) {
+            Some(runs) => {
+                let run_iter = runs.map(|node_indices| {
+                    PyTuple::new_bound(
+                        py,
+                        node_indices
+                            .into_iter()
+                            .map(|node_index| self.get_node(py, node_index).unwrap()),
+                    )
+                    .unbind()
+                });
+                let out_set = PySet::empty_bound(py)?;
+                for run_tuple in run_iter {
+                    out_set.add(run_tuple)?;
+                }
+                Ok(out_set.unbind())
+            }
+            None => Err(PyRuntimeError::new_err(
+                "Invalid DAGCircuit, cycle encountered",
+            )),
+        }
     }
 
     /// Return a set of non-conditional runs of 1q "op" nodes.
-    fn collect_1q_runs(&self) -> PyResult<Py<PyList>> {
-        // def filter_fn(node):
-        //     return (
-        //         isinstance(node, DAGOpNode)
-        //         and len(node.qargs) == 1
-        //         and len(node.cargs) == 0
-        //         and isinstance(node.op, Gate)
-        //         and hasattr(node.op, "__array__")
-        //         and getattr(node.op, "condition", None) is None
-        //         and not node.op.is_parameterized()
-        //     )
-        //
-        // return rx.collect_runs(self._multi_graph, filter_fn)
-        todo!()
+    #[pyo3(name = "collect_1q_runs")]
+    fn py_collect_1q_runs(&self, py: Python) -> PyResult<Py<PyList>> {
+        match self.collect_1q_runs() {
+            Some(runs) => {
+                let runs_iter = runs.map(|node_indices| {
+                    PyList::new_bound(
+                        py,
+                        node_indices
+                            .into_iter()
+                            .map(|node_index| self.get_node(py, node_index).unwrap()),
+                    )
+                    .unbind()
+                });
+                let out_list = PyList::empty_bound(py);
+                for run_list in runs_iter {
+                    out_list.append(run_list)?;
+                }
+                Ok(out_list.unbind())
+            }
+            None => Err(PyRuntimeError::new_err(
+                "Invalid DAGCircuit, cycle encountered",
+            )),
+        }
     }
 
     /// Return a set of non-conditional runs of 2q "op" nodes.
-    fn collect_2q_runs(&self) -> PyResult<Py<PyList>> {
-        // to_qid = {}
-        // for i, qubit in enumerate(self.qubits):
-        //     to_qid[qubit] = i
-        //
-        // def filter_fn(node):
-        //     if isinstance(node, DAGOpNode):
-        //         return (
-        //             isinstance(node.op, Gate)
-        //             and len(node.qargs) <= 2
-        //             and not getattr(node.op, "condition", None)
-        //             and not node.op.is_parameterized()
-        //         )
-        //     else:
-        //         return None
-        //
-        // def color_fn(edge):
-        //     if isinstance(edge, Qubit):
-        //         return to_qid[edge]
-        //     else:
-        //         return None
-        //
-        // return rx.collect_bicolor_runs(self._multi_graph, filter_fn, color_fn)
-        todo!()
+    #[pyo3(name = "collect_2q_runs")]
+    fn py_collect_2q_runs(&self, py: Python) -> PyResult<Py<PyList>> {
+        match self.collect_2q_runs() {
+            Some(runs) => {
+                let runs_iter = runs.into_iter().map(|node_indices| {
+                    PyList::new_bound(
+                        py,
+                        node_indices
+                            .into_iter()
+                            .map(|node_index| self.get_node(py, node_index).unwrap()),
+                    )
+                    .unbind()
+                });
+                let out_list = PyList::empty_bound(py);
+                for run_list in runs_iter {
+                    out_list.append(run_list)?;
+                }
+                Ok(out_list.unbind())
+            }
+            None => Err(PyRuntimeError::new_err(
+                "Invalid DAGCircuit, cycle encountered",
+            )),
+        }
     }
 
     /// Iterator for nodes that affect a given wire.
@@ -3246,42 +3296,79 @@ def _format(operand):
     ///
     /// Returns:
     ///     Set[~qiskit.circuit.Qubit]: The set of qubits whose interactions affect ``qubit``.
-    fn quantum_causal_cone(&self, qubit: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
-        // # Retrieve the output node from the qubit
-        // output_node = self.output_map.get(qubit, None)
-        // if not output_node:
-        //     raise DAGCircuitError(f"Qubit {qubit} is not part of this circuit.")
-        // # Add the qubit to the causal cone.
-        // qubits_to_check = {qubit}
-        // # Add predecessors of output node to the queue.
-        // queue = deque(self.predecessors(output_node))
-        //
-        // # While queue isn't empty
-        // while queue:
-        //     # Pop first element.
-        //     node_to_check = queue.popleft()
-        //     # Check whether element is input or output node.
-        //     if isinstance(node_to_check, DAGOpNode):
-        //         # Keep all the qubits in the operation inside a set.
-        //         qubit_set = set(node_to_check.qargs)
-        //         # Check if there are any qubits in common and that the operation is not a barrier.
-        //         if (
-        //             len(qubit_set.intersection(qubits_to_check)) > 0
-        //             and node_to_check.op.name != "barrier"
-        //             and not getattr(node_to_check.op, "_directive")
-        //         ):
-        //             # If so, add all the qubits to the causal cone.
-        //             qubits_to_check = qubits_to_check.union(qubit_set)
-        //     # For each predecessor of the current node, filter input/output nodes,
-        //     # also make sure it has at least one qubit in common. Then append.
-        //     for node in self.quantum_predecessors(node_to_check):
-        //         if (
-        //             isinstance(node, DAGOpNode)
-        //             and len(qubits_to_check.intersection(set(node.qargs))) > 0
-        //         ):
-        //             queue.append(node)
-        // return qubits_to_check
-        todo!()
+    fn quantum_causal_cone(&self, py: Python, qubit: &Bound<PyAny>) -> PyResult<Py<PySet>> {
+        // Retrieve the output node from the qubit
+        let output_qubit = self.qubits.find(qubit).ok_or_else(|| {
+            DAGCircuitError::new_err(format!(
+                "The given qubit {:?} is not present in the circuit",
+                qubit
+            ))
+        })?;
+        let output_node_index = self.qubit_output_map.get(&output_qubit).ok_or_else(|| {
+            DAGCircuitError::new_err(format!(
+                "The given qubit {:?} is not present in qubit_output_map",
+                qubit
+            ))
+        })?;
+
+        let mut qubits_in_cone: HashSet<&Qubit> = HashSet::from([&output_qubit]);
+        let mut queue: VecDeque<NodeIndex> =
+            self.quantum_predecessors(*output_node_index).collect();
+
+        // The processed_non_directive_nodes stores the set of processed non-directive nodes.
+        // This is an optimization to avoid considering the same non-directive node multiple
+        // times when reached from different paths.
+        // The directive nodes (such as barriers or measures) are trickier since when processing
+        // them we only add their predecessors that intersect qubits_in_cone. Hence, directive
+        // nodes have to be considered multiple times.
+        let mut processed_non_directive_nodes: HashSet<NodeIndex> = HashSet::new();
+
+        while !queue.is_empty() {
+            let cur_index = queue.pop_front().unwrap();
+
+            if let NodeType::Operation(packed) = self.dag.node_weight(cur_index).unwrap() {
+                if !packed.op.directive() {
+                    // If the operation is not a directive (in particular not a barrier nor a measure),
+                    // we do not do anything if it was already processed. Otherwise, we add its qubits
+                    // to qubits_in_cone, and append its predecessors to queue.
+                    if processed_non_directive_nodes.contains(&cur_index) {
+                        continue;
+                    }
+                    qubits_in_cone.extend(self.qargs_cache.intern(packed.qubits_id).iter());
+                    processed_non_directive_nodes.insert(cur_index);
+
+                    for pred_index in self.quantum_predecessors(cur_index) {
+                        if let NodeType::Operation(pred_packed) =
+                            self.dag.node_weight(pred_index).unwrap()
+                        {
+                            queue.push_back(pred_index);
+                        }
+                    }
+                } else {
+                    // Directives (such as barriers and measures) may be defined over all the qubits,
+                    // yet not all of these qubits should be considered in the causal cone. So we
+                    // only add those predecessors that have qubits in common with qubits_in_cone.
+                    for pred_index in self.quantum_predecessors(cur_index) {
+                        if let NodeType::Operation(pred_packed) =
+                            self.dag.node_weight(pred_index).unwrap()
+                        {
+                            if self
+                                .qargs_cache
+                                .intern(pred_packed.qubits_id)
+                                .iter()
+                                .any(|x| qubits_in_cone.contains(x))
+                            {
+                                queue.push_back(pred_index);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let qubits_in_cone_vec: Vec<_> = qubits_in_cone.iter().map(|&&qubit| qubit).collect();
+        let elements = self.qubits.map_indices(&qubits_in_cone_vec[..]);
+        Ok(PySet::new_bound(py, elements)?.unbind())
     }
 
     /// Return a dictionary of circuit properties.
@@ -3318,15 +3405,108 @@ def _format(operand):
     ///     Ipython.display.Image: if in Jupyter notebook and not saving to file,
     ///     otherwise None.
     #[pyo3(signature=(scale=0.7, filename=None, style="color"))]
-    fn draw(&self, scale: f64, filename: Option<&str>, style: &str) -> PyResult<Py<PyAny>> {
-        // from qiskit.visualization.dag_visualization import dag_drawer
-        //
-        // return dag_drawer(dag=self, scale=scale, filename=filename, style=style)
-        todo!()
+    fn draw<'py>(
+        slf: PyRef<'py, Self>,
+        py: Python<'py>,
+        scale: f64,
+        filename: Option<&str>,
+        style: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let module = PyModule::import_bound(py, "qiskit.visualization.dag_visualization")?;
+        module.call_method1("dag_drawer", (slf, scale, filename, style))
+    }
+
+    fn _to_dot<'py>(
+        &self,
+        py: Python<'py>,
+        graph_attrs: Option<BTreeMap<String, String>>,
+        node_attrs: Option<PyObject>,
+        edge_attrs: Option<PyObject>,
+    ) -> PyResult<Bound<'py, PyString>> {
+        let mut buffer = Vec::<u8>::new();
+        build_dot(py, self, &mut buffer, graph_attrs, node_attrs, edge_attrs)?;
+        Ok(PyString::new_bound(py, std::str::from_utf8(&buffer)?))
     }
 }
 
 impl DAGCircuit {
+    /// Return an iterator of gate runs with non-conditional op nodes of given names
+    pub fn collect_runs(
+        &self,
+        namelist: HashSet<String>,
+    ) -> Option<impl Iterator<Item = Vec<NodeIndex>> + '_> {
+        let filter_fn = move |node_index: NodeIndex| -> Result<bool, Infallible> {
+            let node = &self.dag[node_index];
+            match node {
+                NodeType::Operation(inst) => Ok(namelist.contains(inst.op.name())
+                    && match &inst.extra_attrs {
+                        None => true,
+                        Some(attrs) => attrs.condition.is_none(),
+                    }),
+                _ => Ok(false),
+            }
+        };
+        rustworkx_core::dag_algo::collect_runs(&self.dag, filter_fn)
+            .map(|node_iter| node_iter.map(|x| x.unwrap()))
+    }
+
+    /// Return a set of non-conditional runs of 1q "op" nodes.
+    pub fn collect_1q_runs(&self) -> Option<impl Iterator<Item = Vec<NodeIndex>> + '_> {
+        let filter_fn = move |node_index: NodeIndex| -> Result<bool, Infallible> {
+            let node = &self.dag[node_index];
+            match node {
+                NodeType::Operation(inst) => Ok(inst.op.num_qubits() == 1
+                    && inst.op.num_clbits() == 0
+                    && inst.op.matrix(&inst.params).is_some()
+                    && match &inst.extra_attrs {
+                        None => true,
+                        Some(attrs) => attrs.condition.is_none(),
+                    }),
+                _ => Ok(false),
+            }
+        };
+        rustworkx_core::dag_algo::collect_runs(&self.dag, filter_fn)
+            .map(|node_iter| node_iter.map(|x| x.unwrap()))
+    }
+
+    /// Return a set of non-conditional runs of 2q "op" nodes.
+    pub fn collect_2q_runs(&self) -> Option<Vec<Vec<NodeIndex>>> {
+        let filter_fn = move |node_index: NodeIndex| -> Result<Option<bool>, Infallible> {
+            let node = &self.dag[node_index];
+            match node {
+                NodeType::Operation(inst) => match &inst.op {
+                    OperationType::Standard(gate) => Ok(Some(
+                        gate.num_qubits() <= 2
+                            && match &inst.extra_attrs {
+                                None => true,
+                                Some(attrs) => attrs.condition.is_none(),
+                            }
+                            && !inst.is_parameterized(),
+                    )),
+                    OperationType::Gate(gate) => Ok(Some(
+                        gate.num_qubits() <= 2
+                            && match &inst.extra_attrs {
+                                None => true,
+                                Some(attrs) => attrs.condition.is_none(),
+                            }
+                            && !inst.is_parameterized(),
+                    )),
+                    _ => Ok(Some(false)),
+                },
+                _ => Ok(None),
+            }
+        };
+
+        let color_fn = move |edge_index: EdgeIndex| -> Result<Option<usize>, Infallible> {
+            let wire = self.dag.edge_weight(edge_index).unwrap();
+            match wire {
+                Wire::Qubit(index) => Ok(Some(index.0 as usize)),
+                Wire::Clbit(_) => Ok(None),
+            }
+        };
+        rustworkx_core::dag_algo::collect_bicolor_runs(&self.dag, filter_fn, color_fn).unwrap()
+    }
+
     fn increment_op(&mut self, op: String) {
         match self.op_names.entry(op) {
             hash_map::Entry::Occupied(mut o) => {
@@ -3349,6 +3529,26 @@ impl DAGCircuit {
             }
             _ => panic!("Cannot decrement something not added!"),
         }
+    }
+
+    fn quantum_predecessors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.dag
+            .edges_directed(node, Incoming)
+            .filter_map(|e| match e.weight() {
+                Wire::Qubit(_) => Some(e.source()),
+                _ => None,
+            })
+            .unique()
+    }
+
+    fn quantum_successors(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.dag
+            .edges_directed(node, Outgoing)
+            .filter_map(|e| match e.weight() {
+                Wire::Qubit(_) => Some(e.target()),
+                _ => None,
+            })
+            .unique()
     }
 
     fn topological_nodes(&self) -> PyResult<impl Iterator<Item = NodeIndex>> {
@@ -3603,7 +3803,7 @@ impl DAGCircuit {
         Ok(clbit)
     }
 
-    fn get_node(&self, py: Python, node: NodeIndex) -> PyResult<Py<PyAny>> {
+    pub(crate) fn get_node(&self, py: Python, node: NodeIndex) -> PyResult<Py<PyAny>> {
         self.unpack_into(py, node, self.dag.node_weight(node).unwrap())
     }
 
