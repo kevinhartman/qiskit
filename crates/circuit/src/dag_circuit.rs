@@ -39,14 +39,18 @@ use pyo3::{intern, PyObject, PyResult, PyVisit};
 use rustworkx_core::err::ContractError;
 use rustworkx_core::graph_ext::ContractNodesDirected;
 use rustworkx_core::petgraph;
+use rustworkx_core::petgraph::adj::EdgeReference;
+use rustworkx_core::petgraph::algo::connected_components;
 use rustworkx_core::petgraph::prelude::StableDiGraph;
 use rustworkx_core::petgraph::stable_graph::{DefaultIx, IndexType, Neighbors, NodeIndex};
-use rustworkx_core::petgraph::visit::{IntoNodeReferences, NodeCount, NodeRef};
+use rustworkx_core::petgraph::visit::{IntoEdgeReferences, IntoNodeReferences, NodeCount, NodeFiltered, NodeRef};
 use rustworkx_core::petgraph::Incoming;
 use rustworkx_core::traversal::{
     ancestors as core_ancestors, bfs_successors as core_bfs_successors,
     descendants as core_descendants,
 };
+use rustworkx_core::connectivity::connected_components as core_connected_components;
+
 use std::borrow::Borrow;
 use std::convert::Infallible;
 use std::f64::consts::PI;
@@ -653,10 +657,11 @@ def _format(operand):
                 register_name
             )));
         }
-        self.qregs.bind(py).set_item(register_name, qreg)?;
+        self.qregs.bind(py).set_item(&register_name, qreg)?;
 
         for (index, bit) in qreg.iter()?.enumerate() {
             let bit = bit?;
+            println!("Adding qreg {:?} {:?}", register_name, bit);
             if self.qubits.find(&bit).is_none() {
                 self.add_qubit_unchecked(py, &bit)?;
             }
@@ -1101,6 +1106,10 @@ def _format(operand):
         cargs: Option<TupleLikeArg>,
         check: bool,
     ) -> PyResult<Py<PyAny>> {
+        println!("apply_operation_back!!!!!");
+        println!("\t{:?}", op);
+        println!("\t{:?}", qargs.as_ref().unwrap().value);    
+        println!("\t{:?}", cargs.as_ref().unwrap().value); 
         let old_op = op.clone().unbind();
         let op = convert_py_to_operation_type(py, op.unbind())?;
         let qargs = qargs.map(|q| q.value);
@@ -1226,6 +1235,10 @@ def _format(operand):
         cargs: Option<TupleLikeArg>,
         check: bool,
     ) -> PyResult<Py<PyAny>> {
+        println!("apply_operation_front!!!!!");
+        println!("\t{:?}", op);
+        println!("\t{:?}", qargs.as_ref().unwrap().value);    
+        println!("\t{:?}", cargs.as_ref().unwrap().value);    
         let old_op = op.clone().unbind();
         let op = convert_py_to_operation_type(py, op.unbind())?;
         let qargs = qargs.map(|q| q.value);
@@ -1762,7 +1775,7 @@ def _format(operand):
     /// Return the total number of qubits + clbits used by the circuit.
     /// This function formerly returned the number of qubits by the calculation
     /// return len(self._wires) - self.num_clbits()
-    /// but was changed by issue #2564 to return number of qubits + clbits
+    /// but was changed by issue #2564 to return number of qubits + 
     /// with the new function DAGCircuit.num_qubits replacing the former
     /// semantic of DAGCircuit.width().
     fn width(&self) -> usize {
@@ -2503,20 +2516,48 @@ def _format(operand):
     /// clbits as ``self``. The global phase information in ``self`` will not be maintained
     /// in the subcircuits returned by this method.
     #[pyo3(signature = (remove_idle_qubits=false))]
-    fn separable_circuits(&self, remove_idle_qubits: bool) -> Py<PyList> {
-        // connected_components = rx.weakly_connected_components(self._multi_graph)
-        //
-        // # Collect each disconnected subgraph
-        // disconnected_subgraphs = []
-        // for components in connected_components:
-        //     disconnected_subgraphs.append(self._multi_graph.subgraph(list(components)))
-        //
+    fn separable_circuits(&self, py: Python, remove_idle_qubits: bool) -> Py<PyList> {
+
+        println!("\n\n#####   current DAG circuit #####");
+        DAGCircuit::print_dag(self);
+        // return PyList::empty_bound(py).unbind();
+
+        let connected_components = core_connected_components(&self.dag);
+
+        // TODO: remove
+        // println!("\n\n#####   connectecd components #####");
+        // for comp in connected_components.iter() {
+        //     println!("{:?}", comp);
+        //     for c in comp.iter() {
+        //         println!("\t{:?} {:?}", c, self.dag.node_weight(*c));
+        //     }
+        // }
+
+        for comp_nodes in connected_components.iter() {
+            println!("\n\nComponent nodes {:?}", comp_nodes);
+            let mut new_dag = self.copy_empty_like(py).unwrap(); // TODO: remove unwrap?
+            println!("\n\n#####   new sub DAG BEFORE #####");
+            DAGCircuit::print_dag(&new_dag); // TODO: remove
+
+            println!("\n\n#####   extracting sub DAG #####");
+            new_dag.extract_subgraph_from_other(py, self, comp_nodes);
+
+            println!("\n\n#####   new sub DAG AFTER #####");
+            DAGCircuit::print_dag(&new_dag); // TODO: remove
+        }
+
+        // // TODO: remove
+        // println!("\n\n#####   disconnected_subgraphs #####");
+        // for subg in disconnected_subgraphs.iter() {
+        //     println!("{:?}", subg);
+        // }
+
+        // TODO: handle the lexicographical order
         // # Helper function for ensuring rustworkx nodes are returned in lexicographical,
         // # topological order
         // def _key(x):
         //     return x.sort_key
-        //
-        // # Create new DAGCircuit objects from each of the rustworkx subgraph objects
+        
         // decomposed_dags = []
         // for subgraph in disconnected_subgraphs:
         //     new_dag = self.copy_empty_like()
@@ -2539,7 +2580,8 @@ def _format(operand):
         //         dag.remove_qubits(*(bit for bit in dag.idle_wires() if isinstance(bit, Qubit)))
         //
         // return decomposed_dags
-        todo!()
+        
+        PyList::empty_bound(py).unbind()
     }
 
     /// Swap connected nodes e.g. due to commutation.
@@ -3659,5 +3701,117 @@ impl DAGCircuit {
             }
         };
         Ok(dag_node)
+    }
+}
+
+impl DAGCircuit {
+    // TODO: document
+    // assumption node_set forms a strongly connected component in other
+    fn extract_subgraph_from_other(&mut self, py: Python, other: &DAGCircuit, node_set: &HashSet<NodeIndex>)
+    {
+        // A map from nodes in the other DAGCircuit to nodes in self
+        let mut node_map: HashMap<NodeIndex, NodeIndex> = HashMap::with_capacity(node_set.len());
+        
+        for node in node_set {
+            println!("Adding node from {:?} {:?}", *node, other.dag.node_weight(*node));
+            let node_weight = other.dag.node_weight(*node).clone().unwrap();
+            match node_weight {
+                NodeType::ClbitIn(b) => {
+                    let clbit_in = self.clbit_input_map.get(b).unwrap();
+                    node_map.insert(*node, *clbit_in);
+                    println!("Mapping clbit in {:?} to {:?}", node, clbit_in);
+                },
+                NodeType::ClbitOut(b) => {
+                    let clbit_out = self.clbit_output_map.get(b).unwrap();
+                    node_map.insert(*node, *clbit_out);
+                    println!("Mapping clbit out {:?} to {:?}", node, clbit_out);
+                },
+                NodeType::QubitIn(q) => {
+                    let qbit_in = self.qubit_input_map.get(q).unwrap();
+                    node_map.insert(*node, *qbit_in);
+                    println!("Mapping qubit in {:?} to {:?}", node, qbit_in);
+                },
+                NodeType::QubitOut(q) => {
+                    let qbit_out = self.qubit_output_map.get(q).unwrap();
+                    node_map.insert(*node, *qbit_out);
+                    println!("Mapping qubit out {:?} to {:?}", node, qbit_out);
+                },
+                NodeType::Operation(pi) => {
+                    let extr_attr = pi.extra_attrs.clone().unwrap();
+                    let new_pi = NodeType::Operation(PackedInstruction::new(
+                        pi.op.clone(),
+                        pi.qubits_id, // TODO: handle self interning
+                        pi.clbits_id, // TODO: handle self interning
+                        pi.params.clone(),
+                        extr_attr.label,
+                        extr_attr.duration,
+                        extr_attr.unit,
+                        extr_attr.condition,
+                        #[cfg(feature = "cache_pygates")] 
+                        pi.py_op.clone()
+                    ));
+                    let new_node = self.dag.add_node(new_pi);
+                    node_map.insert(*node, new_node);
+                    println!("Mapping instruction {:?} to {:?}", node, new_node);
+                },
+            }
+            
+        }
+
+
+        for node_other in node_set {
+            let outgoing_edges = other.dag.edges_directed(*node_other, Direction::Outgoing); // TODO: map
+            
+            // Remove the edges added by copy_empty_like (as idle wires) to avoid duplication 
+            if let Some(NodeType::QubitIn(_)) | Some(NodeType::ClbitIn(_)) = other.dag.node_weight(*node_other) {
+                let edges: Vec<EdgeIndex> = self.dag.edges(*node_other).map(|e| e.id()).collect();
+                for edge in edges {
+                    self.dag.remove_edge(edge);
+
+                }
+            }
+            for e in outgoing_edges {
+                println!("Edge {:?}", e);
+                println!("Nodes {:?}, {:?}", e.source(), e.target());
+                
+                let (source_other, target_other) = (e.source(), e.target());
+                let edge_weight = e.weight();
+                let (source_self, target_self) = (node_map.get(&source_other).unwrap(), node_map.get(&target_other).unwrap());    
+                self.dag.add_edge(*source_self, *target_self, edge_weight.clone()); //TODO: handle clone
+
+            }
+        }
+    }
+
+    // TODO: remove
+    fn print_dag(dag_ciruit: &DAGCircuit) {
+        println!("dag.qubits {:?}", dag_ciruit.qubits);
+        for node in dag_ciruit.dag.node_indices() {
+            println!("Node {:?}", node);
+            let node_weight = dag_ciruit.dag.node_weight(node).unwrap();
+            match node_weight { 
+                NodeType::QubitIn(q) => println!("\tQubitIN {:?}", q),
+                NodeType::QubitOut(q) => println!("\tQubitOut {:?}", q),
+                NodeType::ClbitIn(c)  => println!("\tClbitIn {:?}", c),
+                NodeType::ClbitOut(c) => println!("\tClbitOut {:?}", c),
+                NodeType::Operation(pi) => {
+                    println!("\tPackedInstruction");
+                    println!("\top {:?}", pi.op);
+                    // println!("\tqubits_id {:?} {:?}", pi.qubits_id, dag_ciruit.qargs_cache.intern(pi.qubits_id));
+                    // println!("\tclbits_id {:?} {:?}", pi.clbits_id, dag_ciruit.cargs_cache.intern(pi.clbits_id));
+                    println!("\tparams {:?}", pi.params);
+                    let extra_attr = pi.extra_attrs.clone().unwrap();
+                    println!("\textr_attr {:?} {:?} {:?} {:?}", extra_attr.label, extra_attr.duration, extra_attr.unit, extra_attr.condition);
+                    #[cfg(feature = "cache_pygates")]
+                    println!("\tpy_op {:?}", pi.py_op);
+                }
+            }
+        }
+        for edge in dag_ciruit.dag.edge_indices() {
+            println!("Edge {:?}, weight {:?}", edge, dag_ciruit.dag.edge_weight(edge));
+            let endpoints = dag_ciruit.dag.edge_endpoints(edge);
+            println!("\tEndpoints {:?}", endpoints);
+        }
+
     }
 }
