@@ -2557,15 +2557,17 @@ def _format(operand):
         let node2 = node2.node.unwrap();
         let dag_binding = self.dag.clone();
 
-        // extracted functionality from get_edge_data. Had to collect to be able
-        // to reverse the iterator in the for loop.
+        // extracted functionality from rustworkx's 'get_edge_data'
         let connected_edges = dag_binding
             .edges(node1)
             .filter(|edge| edge.target() == node2)
-            .map(|edge| edge)
             .collect::<Vec<_>>();
 
-        // see: https://en.wikipedia.org/wiki/Oyakodon
+        // find first parent/child for a given edge, depending on the specified direction:
+        //  - Incoming -> parent
+        //  - Outgoing -> child
+        // merged functionality from rustworkx's 'find_predecessors_by_edge' and 'find_successors_by_edge'
+        // to understand name, see: https://en.wikipedia.org/wiki/Oyakodon
         let find_first_oyako_by_edge =
             |(node, direction, ref_edge): (NodeIndex, Direction, EdgeReference<Wire>)| {
                 let mut oyakosan = Vec::new();
@@ -2579,26 +2581,16 @@ def _format(operand):
                 oyakosan[0]
             };
 
-        // 0 confidence that I am adding and removing the right edges here.
-        // Leaving the corresponding Python lines for reference
         for edge in connected_edges.iter().rev() {
-            // edge_parent = self._multi_graph.find_predecessors_by_edge(node1_id, edge_find)[0]
             let edge_parent = find_first_oyako_by_edge((node1, Incoming, *edge));
-            // self._multi_graph.remove_edge(edge_parent._node_id, node1_id)
             self.dag.remove_edge(edge_parent.id());
-            //self._multi_graph.add_edge(edge_parent._node_id, node2_id, edge)
             self.dag
                 .add_edge(edge_parent.source(), node2, *edge.weight());
-            // edge_child = self._multi_graph.find_successors_by_edge(node2_id, edge_find)[0]
-            let edge_child = find_first_oyako_by_edge((node2, Outgoing, *edge));
-            // self._multi_graph.remove_edge(node1_id, node2_id)
             self.dag
                 .remove_edge(self.dag.edges_connecting(node1, node2).collect::<Vec<_>>()[0].id());
-            //     self._multi_graph.add_edge(node2_id, node1_id, edge)
             self.dag.add_edge(node2, node1, *edge.weight());
-            //     self._multi_graph.remove_edge(node2_id, edge_child._node_id)
+            let edge_child = find_first_oyako_by_edge((node2, Outgoing, *edge));
             self.dag.remove_edge(edge_child.id());
-            //     self._multi_graph.add_edge(node1_id, edge_child._node_id, edge)
             self.dag
                 .add_edge(node1, edge_parent.target(), *edge.weight());
         }
