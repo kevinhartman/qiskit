@@ -23,6 +23,7 @@ use crate::imports::{
 };
 use crate::interner::Index;
 use crate::operations::{OperationType, Param, PyGate, PyInstruction, PyOperation, StandardGate};
+use crate::{Clbit, Qubit};
 
 /// These are extra mutable attributes for a circuit instruction's state. In general we don't
 /// typically deal with this in rust space and the majority of the time they're not used in Python
@@ -83,6 +84,12 @@ impl PackedInstruction {
             #[cfg(feature = "cache_pygates")]
             py_op,
         }
+    }
+
+    pub fn condition(&self) -> Option<&PyObject> {
+        self.extra_attrs
+            .as_ref()
+            .and_then(|args| args.condition.as_ref())
     }
 
     pub fn is_parameterized(&self) -> bool {

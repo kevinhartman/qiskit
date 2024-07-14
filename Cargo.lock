@@ -1393,8 +1393,8 @@ checksum = "80af6f9131f277a45a3fba6ce8e2258037bb0477a67e610d3c1fe046ab31de47"
 
 [[package]]
 name = "rustworkx-core"
-version = "0.15.0"
-source = "git+https://github.com/Qiskit/rustworkx.git#326a4d324218a7d9aea1e84f3b39f3c449113755"
+version = "0.16.0"
+source = "git+https://github.com/Qiskit/rustworkx.git#b18e494b7938964014706c6fbbc810151a12380f"
 dependencies = [
  "ahash 0.8.11",
  "fixedbitset",

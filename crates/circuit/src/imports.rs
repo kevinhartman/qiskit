@@ -63,6 +63,10 @@ pub static INSTRUCTION: ImportOnceCell =
 pub static GATE: ImportOnceCell = ImportOnceCell::new("qiskit.circuit.gate", "Gate");
 pub static QUBIT: ImportOnceCell = ImportOnceCell::new("qiskit.circuit.quantumregister", "Qubit");
 pub static CLBIT: ImportOnceCell = ImportOnceCell::new("qiskit.circuit.classicalregister", "Clbit");
+pub static QUANTUM_REGISTER: ImportOnceCell =
+    ImportOnceCell::new("qiskit.circuit.quantumregister", "QuantumRegister");
+pub static CLASSICAL_REGISTER: ImportOnceCell =
+    ImportOnceCell::new("qiskit.circuit.classicalregister", "ClassicalRegister");
 pub static PARAMETER_EXPRESSION: ImportOnceCell =
     ImportOnceCell::new("qiskit.circuit.parameterexpression", "ParameterExpression");
 pub static QUANTUM_CIRCUIT: ImportOnceCell =
@@ -73,6 +77,12 @@ pub static SINGLETON_CONTROLLED_GATE: ImportOnceCell =
     ImportOnceCell::new("qiskit.circuit.singleton", "SingletonControlledGate");
 pub static VARIABLE_MAPPER: ImportOnceCell =
     ImportOnceCell::new("qiskit.circuit._classical_resource_map", "VariableMapper");
+pub static CONTROL_FLOW_OP: ImportOnceCell = ImportOnceCell::new("qiskit.circuit", "ControlFlowOp");
+pub static SWITCH_CASE_OP: ImportOnceCell = ImportOnceCell::new("qiskit.circuit", "SwitchCaseOp");
+pub static STORE_OP: ImportOnceCell = ImportOnceCell::new("qiskit.circuit", "Store");
+pub static EXPR: ImportOnceCell = ImportOnceCell::new("qiskit.circuit.classical.expr", "Expr");
+pub static ITER_VARS: ImportOnceCell =
+    ImportOnceCell::new("qiskit.circuit.classical.expr", "iter_vars");
 
 pub static DAG_NODE: ImportOnceCell = ImportOnceCell::new("qiskit.dagcircuit", "DAGNode");
 
