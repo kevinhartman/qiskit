@@ -1712,10 +1712,7 @@ class _OldDAGCircuit:
         # Collect each disconnected subgraph
         disconnected_subgraphs = []
         for components in connected_components:
-            print(components)
-            sub_graph = self._multi_graph.subgraph(list(components))
-            print(sub_graph)
-            disconnected_subgraphs.append(sub_graph)
+            disconnected_subgraphs.append(self._multi_graph.subgraph(list(components)))
 
         # Helper function for ensuring rustworkx nodes are returned in lexicographical,
         # topological order
@@ -1728,9 +1725,7 @@ class _OldDAGCircuit:
             new_dag = self.copy_empty_like(vars_mode=vars_mode)
             new_dag.global_phase = 0
             subgraph_is_classical = True
-            print(f"On graph {subgraph}")
             for node in rx.lexicographical_topological_sort(subgraph, key=_key):
-                print(f"On node {node}")
                 if isinstance(node, DAGInNode):
                     if isinstance(node.wire, Qubit):
                         subgraph_is_classical = False
