@@ -737,7 +737,7 @@ def _format(operand):
             return Err(DAGCircuitError::new_err("not a QuantumRegister instance."));
         }
 
-        println!("adding qreg: {:?}", qreg);
+        // println!("adding qreg: {:?}", qreg);
         let register_name = qreg.getattr(intern!(py, "name"))?;
         if self.qregs.bind(py).contains(&register_name)? {
             return Err(DAGCircuitError::new_err(format!(
@@ -749,7 +749,7 @@ def _format(operand):
 
         for (index, bit) in qreg.iter()?.enumerate() {
             let bit = bit?;
-            println!("Adding qreg {:?} {:?}", register_name, bit);
+            // println!("Adding qreg {:?} {:?}", register_name, bit);
             if self.qubits.find(&bit).is_none() {
                 self.add_qubit_unchecked(py, &bit)?;
             }
@@ -772,7 +772,7 @@ def _format(operand):
             ));
         }
 
-        println!("Adding creg {:?}", creg);
+        // println!("Adding creg {:?}", creg);
         let register_name = creg.getattr(intern!(py, "name"))?;
         if self.cregs.bind(py).contains(&register_name)? {
             return Err(DAGCircuitError::new_err(format!(
@@ -981,24 +981,27 @@ def _format(operand):
     ///         or is not idle.
     #[pyo3(signature = (*qubits))]
     fn remove_qubits(&mut self, py: Python, qubits: &Bound<PyTuple>) -> PyResult<()> {
-        let mut non_bits = Vec::new();
+        let mut non_qbits = Vec::new();
         for bit in qubits.iter() {
-            if !bit.is_instance(self.circuit_module.clbit.bind(py))? {
-                non_bits.push(bit);
+            if !bit.is_instance(self.circuit_module.qubit.bind(py))? {
+                println!("Bit to remove {:?}", &bit);
+                non_qbits.push(bit);
             }
         }
-        if !non_bits.is_empty() {
+        if !non_qbits.is_empty() {
             return Err(DAGCircuitError::new_err(format!(
                 "qubits not of type Qubit: {:?}",
-                non_bits
+                non_qbits
             )));
         }
 
         let qubits: IndexSet<Qubit> = self.qubits.map_bits(qubits)?.collect();
+
         let mut busy_bits = Vec::new();
         for bit in qubits.iter() {
             if !self.is_wire_idle(&Wire::Qubit(*bit))? {
                 busy_bits.push(self.qubits.get(*bit).unwrap());
+                println!("Busy bit{:?}", &bit);
             }
         }
 
@@ -1015,6 +1018,7 @@ def _format(operand):
             for bit in qreg.iter()? {
                 let bit = bit?;
                 if qubits.contains(&self.qubits.find(&bit).unwrap()) {
+                    println!("Qreg to remove {:?}", &qreg);
                     qregs_to_remove.push(qreg);
                     break;
                 }
@@ -1196,22 +1200,22 @@ def _format(operand):
         cargs: Option<TupleLikeArg>,
         check: bool,
     ) -> PyResult<Py<PyAny>> {
-        println!("apply_operation_back!!!!!");
-        println!("\top: {:?}", op);
-        println!("\tqargs: {:?}", qargs.as_ref().unwrap().value);    
-        println!("\tcargs: {:?}", cargs.as_ref().unwrap().value); 
+        // println!("apply_operation_back!!!!!");
+        // println!("\top: {:?}", op);
+        // println!("\tqargs: {:?}", qargs.as_ref().unwrap().value);    
+        // println!("\tcargs: {:?}", cargs.as_ref().unwrap().value); 
         let old_op = op.clone().unbind();
         let op = convert_py_to_operation_type(py, op.unbind())?;
         let qargs = qargs.map(|q| q.value);
         let cargs = cargs.map(|c| c.value);
-        println!("my qargs & cargs {:?} {:?}", qargs, cargs);
-        for q in qargs.iter().flatten() {
-            println!("\tq: {:?}", q);
-        }
+        // println!("my qargs & cargs {:?} {:?}", qargs, cargs);
+        // for q in qargs.iter().flatten() {
+        //     println!("\tq: {:?}", q);
+        // }
         let qq: Vec<Qubit> = self.qubits.map_bits(qargs.iter().flatten())?.collect();
-        for q in qq.iter() {
-            println!("\tqq: {:?}", q);
-        }
+        // for q in qq.iter() {
+        //     println!("\tqq: {:?}", q);
+        // }
         let node = {
             let qubits_id = Interner::intern(
                 &mut self.qargs_cache,
@@ -1308,10 +1312,10 @@ def _format(operand):
         cargs: Option<TupleLikeArg>,
         check: bool,
     ) -> PyResult<Py<PyAny>> {
-        println!("apply_operation_front!!!!!");
-        println!("\t{:?}", op);
-        println!("\t{:?}", qargs.as_ref().unwrap().value);    
-        println!("\t{:?}", cargs.as_ref().unwrap().value);    
+        // println!("apply_operation_front!!!!!");
+        // println!("\t{:?}", op);
+        // println!("\t{:?}", qargs.as_ref().unwrap().value);    
+        // println!("\t{:?}", cargs.as_ref().unwrap().value);    
         let old_op = op.clone().unbind();
         let op = convert_py_to_operation_type(py, op.unbind())?;
         let qargs = qargs.map(|q| q.value);
@@ -1718,6 +1722,7 @@ def _format(operand):
     ///         ``recurse=True``, or any control flow is present in a non-recursive call.
     #[pyo3(signature= (*, recurse=false))]
     fn size(&self, py: Python, recurse: bool) -> PyResult<usize> {
+        println!("SIZE: {:?} {:?}", self.dag.node_count(), self.width());
         let length = self.dag.node_count() - self.width() * 2;
         if !recurse {
             // TODO: do this once in module struct `new`.
@@ -2571,69 +2576,30 @@ def _format(operand):
 
         println!("\n\n#####   current DAG circuit #####");
         DAGCircuit::print_dag(self);
-        // return PyList::empty_bound(py).unbind();
 
         let connected_components = core_connected_components(&self.dag);
 
-        // TODO: remove
-        // println!("\n\n#####   connectecd components #####");
-        // for comp in connected_components.iter() {
-        //     println!("{:?}", comp);
-        //     for c in comp.iter() {
-        //         println!("\t{:?} {:?}", c, self.dag.node_weight(*c));
-        //     }
-        // }
-
         let dags = PyList::empty_bound(py);
         for comp_nodes in connected_components.iter() {
-            println!("\n\nComponent nodes {:?}", comp_nodes);
+            // println!("\n\nComponent nodes {:?}", comp_nodes);
             let mut new_dag = self.copy_empty_like(py).unwrap(); // TODO: remove unwrap?
-            println!("\n\n#####   new sub DAG BEFORE #####");
-            DAGCircuit::print_dag(&new_dag); // TODO: remove
+            // new_dag.set_global_phase(py, 0); // TODO: handle
+            // println!("\n\n#####   new sub DAG BEFORE #####");
+            // DAGCircuit::print_dag(&new_dag); // TODO: remove
 
-            println!("\n\n#####   extracting sub DAG #####");
-            new_dag.extract_subgraph_from_other(py, self, comp_nodes);
+            // println!("\n\n#####   extracting sub DAG #####");
+            let r = new_dag.extract_subgraph_from_other(py, self, comp_nodes, remove_idle_qubits);
 
+            // Circuit is comprised of only clbits
+            if let Ok(None) = r { 
+                continue;
+            }
             println!("\n\n#####   new sub DAG AFTER #####");
             DAGCircuit::print_dag(&new_dag); // TODO: remove
             dags.append(pyo3::Py::new(py, new_dag).unwrap());
         }
 
         dags.unbind()
-        // // TODO: remove
-        // println!("\n\n#####   disconnected_subgraphs #####");
-        // for subg in disconnected_subgraphs.iter() {
-        //     println!("{:?}", subg);
-        // }
-
-        // TODO: handle the lexicographical order
-        // # Helper function for ensuring rustworkx nodes are returned in lexicographical,
-        // # topological order
-        // def _key(x):
-        //     return x.sort_key
-        
-        // decomposed_dags = []
-        // for subgraph in disconnected_subgraphs:
-        //     new_dag = self.copy_empty_like()
-        //     new_dag.global_phase = 0
-        //     subgraph_is_classical = True
-        //     for node in rx.lexicographical_topological_sort(subgraph, key=_key):
-        //         if isinstance(node, DAGInNode):
-        //             if isinstance(node.wire, Qubit):
-        //                 subgraph_is_classical = False
-        //         if not isinstance(node, DAGOpNode):
-        //             continue
-        //         new_dag.apply_operation_back(node.op, node.qargs, node.cargs, check=False)
-        //
-        //     # Ignore DAGs created for empty clbits
-        //     if not subgraph_is_classical:
-        //         decomposed_dags.append(new_dag)
-        //
-        // if remove_idle_qubits:
-        //     for dag in decomposed_dags:
-        //         dag.remove_qubits(*(bit for bit in dag.idle_wires() if isinstance(bit, Qubit)))
-        //
-        // return decomposed_dags
         
     }
 
@@ -3918,7 +3884,7 @@ impl DAGCircuit {
     /// Raises:
     ///     DAGCircuitError: if trying to add duplicate wire
     fn add_wire(&mut self, wire: Wire) -> PyResult<()> {
-        println!("Adding wire {:?}", wire);
+        // println!("Adding wire {:?}", wire);
         let (in_node, out_node) = match wire {
             Wire::Qubit(qubit) => {
                 match (
@@ -4143,41 +4109,44 @@ impl DAGCircuit {
 impl DAGCircuit {
     // TODO: document
     // assumption node_set forms a strongly connected component in other
-    fn extract_subgraph_from_other(&mut self, py: Python, other: &DAGCircuit, node_set: &HashSet<NodeIndex>) -> PyResult<()>
+    fn extract_subgraph_from_other(&mut self, py: Python, other: &DAGCircuit, node_set: &HashSet<NodeIndex>, remove_idle_qubits: bool) -> PyResult<Option<()>>
     {
         // A map from nodes in the other DAGCircuit to nodes in self
         let mut node_map: HashMap<NodeIndex, NodeIndex> = HashMap::with_capacity(node_set.len());
         
+        let mut clbit_only = true;
         for node in node_set {
-            println!("Adding node from {:?} {:?}", *node, other.dag.node_weight(*node));
+            // println!("Adding node from {:?} {:?}", *node, other.dag.node_weight(*node));
             let node_weight = other.dag.node_weight(*node).clone().unwrap();
             match node_weight {
                 NodeType::ClbitIn(b) => {
                     let clbit_in = self.clbit_input_map.get(b).unwrap();
                     node_map.insert(*node, *clbit_in);
-                    println!("Mapping clbit in {:?} to {:?}", node, clbit_in);
+                    // println!("Mapping clbit in {:?} to {:?}", node, clbit_in);
                 },
                 NodeType::ClbitOut(b) => {
                     let clbit_out = self.clbit_output_map.get(b).unwrap();
                     node_map.insert(*node, *clbit_out);
-                    println!("Mapping clbit out {:?} to {:?}", node, clbit_out);
+                    // println!("Mapping clbit out {:?} to {:?}", node, clbit_out);
                 },
                 NodeType::QubitIn(q) => {
                     let qbit_in = self.qubit_input_map.get(q).unwrap();
                     node_map.insert(*node, *qbit_in);
-                    println!("Mapping qubit in {:?} to {:?}", node, qbit_in);
+                    // println!("Mapping qubit in {:?} to {:?}", node, qbit_in);
+                    clbit_only = false;
                 },
                 NodeType::QubitOut(q) => {
                     let qbit_out = self.qubit_output_map.get(q).unwrap();
                     node_map.insert(*node, *qbit_out);
-                    println!("Mapping qubit out {:?} to {:?}", node, qbit_out);
+                    // println!("Mapping qubit out {:?} to {:?}", node, qbit_out);
+                    clbit_only = false;
                 },
                 NodeType::Operation(pi) => {
-                    println!("Adding operation");
+                    // println!("Adding operation");
                     let qubits = other.qargs_cache.intern(pi.qubits_id);
-                    println!("{:?}", qubits);
+                    // println!("{:?}", qubits);
                     let clbits = other.cargs_cache.intern(pi.clbits_id);
-                    println!("{:?}", clbits);
+                    // println!("{:?}", clbits);
                     let qubits_id = Interner::intern(&mut self.qargs_cache, qubits.clone())?;
                     let clbits_id = Interner::intern(&mut self.cargs_cache, clbits.clone())?;
 
@@ -4197,11 +4166,17 @@ impl DAGCircuit {
                     ));
                     let new_node = self.dag.add_node(new_pi);
                     node_map.insert(*node, new_node);
-                    println!("Mapping instruction {:?} to {:?}", node, new_node);
+                    // println!("Mapping instruction {:?} to {:?}", node, new_node);
+                    clbit_only = false;
                 },
             }
         }
 
+        if clbit_only { 
+            return Ok(None)
+        }
+
+        // Handling the edges
         for node_other in node_set {
             let outgoing_edges = other.dag.edges_directed(*node_other, Direction::Outgoing); // TODO: map
             
@@ -4214,8 +4189,8 @@ impl DAGCircuit {
                 }
             }
             for e in outgoing_edges {
-                println!("Edge {:?}", e);
-                println!("Nodes {:?}, {:?}", e.source(), e.target());
+                // println!("Edge {:?}", e);
+                // println!("Nodes {:?}, {:?}", e.source(), e.target());
                 
                 let (source_other, target_other) = (e.source(), e.target());
                 let edge_weight = e.weight();
@@ -4225,14 +4200,31 @@ impl DAGCircuit {
             }
         }
 
-        Ok(())
+        if remove_idle_qubits {
+            println!("Removing idle qubits");
+            // let idle_wires: Vec<Py<PyAny>> = self.idle_wires(py, None).unwrap().into_bound(py).map(|q| q.unwrap().unbind()).collect();
+            let idle_wires: Vec<Bound<PyAny>> = self.idle_wires(py, None).unwrap().into_bound(py).map(|q| q.unwrap())
+                .filter(|e| e.is_instance(self.circuit_module.qubit.bind(py)).unwrap())
+                .collect();
+            // for iw in idle_wires {
+            //     println!("{:?}", iw);
+            //     println!("{:?}", iw.is_instance(self.circuit_module.clbit.bind(py))?);
+            // }
+
+            
+            let qubits = PyTuple::new_bound(py, idle_wires);
+            self.remove_qubits(py, &qubits);
+            
+        }
+
+        Ok(Some(()))
     }
 
     // TODO: remove
     fn print_dag(dag_ciruit: &DAGCircuit) {
-        println!("dag.qubits {:?}", dag_ciruit.qubits);
+        // println!("dag.qubits {:?}", dag_ciruit.qubits);
         for node in dag_ciruit.dag.node_indices() {
-            println!("Node {:?}", node);
+            print!("Node {:?} ", node);
             let node_weight = dag_ciruit.dag.node_weight(node).unwrap();
             match node_weight { 
                 NodeType::QubitIn(q) => println!("\tQubitIN {:?}", q),
@@ -4253,9 +4245,7 @@ impl DAGCircuit {
             }
         }
         for edge in dag_ciruit.dag.edge_indices() {
-            println!("Edge {:?}, weight {:?}", edge, dag_ciruit.dag.edge_weight(edge));
-            let endpoints = dag_ciruit.dag.edge_endpoints(edge);
-            println!("\tEndpoints {:?}", endpoints);
+            println!("Edge {:?}, weight {:?}, endpoints {:?}", edge, dag_ciruit.dag.edge_weight(edge), dag_ciruit.dag.edge_endpoints(edge));
         }
 
     }
