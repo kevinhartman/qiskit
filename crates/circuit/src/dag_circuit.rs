@@ -2651,8 +2651,8 @@ def _format(operand):
         let dags = PyList::empty_bound(py);
 
         for comp_nodes in connected_components.iter() {
-            let mut new_dag = self.copy_empty_like(py).unwrap(); // TODO: remove unwrap?
-            // new_dag.set_global_phase(py, 0); // TODO: handle
+            let mut new_dag = self.copy_empty_like(py)?; 
+            new_dag.set_global_phase(py, &PyFloat::new_bound(py, 0 as c_double))?;
     
             // A map from nodes in the this DAGCircuit to nodes in the new dag. Used for adding edges
             let mut node_map: HashMap<NodeIndex, NodeIndex> = HashMap::with_capacity(comp_nodes.len());
@@ -2697,7 +2697,7 @@ def _format(operand):
                                 extr_attr.unit,
                                 extr_attr.condition,
                                 #[cfg(feature = "cache_pygates")] 
-                                pi.py_op.clone()
+                                pi.py_op.borrow().clone()                                
                             ));
                             let new_node = new_dag.dag.add_node(new_pi);
                             node_map.insert(*node, new_node);
@@ -2710,7 +2710,6 @@ def _format(operand):
             if !non_classical { continue; }
     
             // Handling the edges in the new dag
-            let mut non_classical = true;
             for node in comp_nodes {
                 // Since the nodes comprise an SCC, it's enough to just look at the (e.g.) outgoing edges
                 let outgoing_edges = self.dag.edges_directed(*node, Direction::Outgoing);
@@ -2727,21 +2726,21 @@ def _format(operand):
                     let (source, target) = (e.source(), e.target());
                     let edge_weight = e.weight();
                     let (source_new, target_new) = (node_map.get(&source).unwrap(), node_map.get(&target).unwrap());    
-                    new_dag.dag.add_edge(*source_new, *target_new, edge_weight.clone()); //TODO: handle clone
+                    new_dag.dag.add_edge(*source_new, *target_new, edge_weight.clone()); 
                 }
             }
     
             if remove_idle_qubits {
-                let idle_wires: Vec<Bound<PyAny>> = new_dag.idle_wires(py, None).unwrap()
+                let idle_wires: Vec<Bound<PyAny>> = new_dag.idle_wires(py, None)?
                     .into_bound(py).map(|q| q.unwrap())
                     .filter(|e| e.is_instance(new_dag.circuit_module.qubit.bind(py)).unwrap())
                     .collect();
                
                 let qubits = PyTuple::new_bound(py, idle_wires);
-                new_dag.remove_qubits(py, &qubits); // TODO: this does not really work, some issue with remove_qubits itself
+                new_dag.remove_qubits(py, &qubits)?; // TODO: this does not really work, some issue with remove_qubits itself
             }
     
-            dags.append(pyo3::Py::new(py, new_dag).unwrap());
+            dags.append(pyo3::Py::new(py, new_dag)?)?;
         }
 
         Ok(dags.unbind())
