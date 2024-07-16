@@ -4155,7 +4155,7 @@ impl DAGCircuit {
                 .collect();
            
             let qubits = PyTuple::new_bound(py, idle_wires);
-            new_dag.remove_qubits(py, &qubits);
+            new_dag.remove_qubits(py, &qubits); // TODO: this does not really work, some issue with remove_qubits itself
         }
 
         Ok(Some(new_dag))
