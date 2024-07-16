@@ -44,11 +44,9 @@ use pyo3::{intern, PyObject, PyResult, PyVisit};
 use rustworkx_core::err::ContractError;
 use rustworkx_core::graph_ext::ContractNodesDirected;
 use rustworkx_core::petgraph;
-use rustworkx_core::petgraph::adj::EdgeReference;
-use rustworkx_core::petgraph::algo::connected_components;
 use rustworkx_core::petgraph::prelude::StableDiGraph;
 use rustworkx_core::petgraph::stable_graph::{DefaultIx, IndexType, Neighbors, NodeIndex};
-use rustworkx_core::petgraph::visit::{IntoEdgeReferences, IntoNodeReferences, NodeCount, NodeFiltered, NodeRef};
+use rustworkx_core::petgraph::visit::{IntoNodeReferences, NodeCount, NodeRef};
 use rustworkx_core::petgraph::Incoming;
 use rustworkx_core::traversal::{
     ancestors as core_ancestors, bfs_successors as core_bfs_successors,
