@@ -2555,44 +2555,67 @@ def _format(operand):
     fn swap_nodes(&mut self, node1: &DAGNode, node2: &DAGNode) -> PyResult<()> {
         let node1 = node1.node.unwrap();
         let node2 = node2.node.unwrap();
-        let dag_binding = self.dag.clone();
 
-        // extracted functionality from rustworkx's 'get_edge_data'
-        let connected_edges = dag_binding
+        // Gather all wires connecting node1 and node1.
+        // This functionality was extracted from rustworkx's 'get_edge_data'
+        let wires: Vec<Wire> = self
+            .dag
             .edges(node1)
             .filter(|edge| edge.target() == node2)
-            .collect::<Vec<_>>();
+            .map(|edge| edge.weight().clone())
+            .collect();
 
-        // find first parent/child for a given edge, depending on the specified direction:
-        //  - Incoming -> parent
-        //  - Outgoing -> child
-        // merged functionality from rustworkx's 'find_predecessors_by_edge' and 'find_successors_by_edge'
-        // to understand name, see: https://en.wikipedia.org/wiki/Oyakodon
-        let find_first_oyako_by_edge =
-            |(node, direction, ref_edge): (NodeIndex, Direction, EdgeReference<Wire>)| {
+        if wires.is_empty() {
+            return Err(DAGCircuitError::new_err(
+                "Attempt to swap unconnected nodes",
+            ));
+        };
+
+        // Closure that finds the first parent/child node connected to a reference node by given wire,
+        // and returns relevant edge information depending on the specified direction:
+        //  - Incoming -> parent -> outputs (parent_edge_id, parent_source_node_id)
+        //  - Outgoing -> child -> outputs (child_edge_id, child_target_node_id)
+        // This functionality was inspired in rustworkx's 'find_predecessors_by_edge' and 'find_successors_by_edge'.
+        // To understand name, see: https://en.wikipedia.org/wiki/Oyakodon
+        let find_first_oyako_by_wire =
+            |(node, direction, &ref wire): (NodeIndex, Direction, &Wire)| {
                 let mut oyakosan = Vec::new();
-                let raw_edges = dag_binding.edges_directed(node, direction);
-                for edge in raw_edges {
-                    if ref_edge.weight() == edge.weight() {
-                        oyakosan.push(edge);
+                for edge in self.dag.edges_directed(node, direction) {
+                    if wire == edge.weight() {
+                        match direction {
+                            Incoming => oyakosan.push((edge.id(), edge.source())),
+                            Outgoing => oyakosan.push((edge.id(), edge.target())),
+                        };
                         break;
                     }
                 }
                 oyakosan[0]
             };
 
-        for edge in connected_edges.iter().rev() {
-            let edge_parent = find_first_oyako_by_edge((node1, Incoming, *edge));
-            self.dag.remove_edge(edge_parent.id());
-            self.dag
-                .add_edge(edge_parent.source(), node2, *edge.weight());
-            self.dag
-                .remove_edge(self.dag.edges_connecting(node1, node2).collect::<Vec<_>>()[0].id());
-            self.dag.add_edge(node2, node1, *edge.weight());
-            let edge_child = find_first_oyako_by_edge((node2, Outgoing, *edge));
-            self.dag.remove_edge(edge_child.id());
-            self.dag
-                .add_edge(node1, edge_parent.target(), *edge.weight());
+        // Vector that contains a tuple of (wire, edge_info, parent_info, child_info) per wire in wires
+        let relevant_edges = wires
+            .iter()
+            .rev()
+            .map(|wire| {
+                (
+                    wire,
+                    find_first_oyako_by_wire((node1, Outgoing, wire)),
+                    find_first_oyako_by_wire((node1, Incoming, wire)),
+                    find_first_oyako_by_wire((node2, Outgoing, wire)),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // Iterate over relevant edges and modify self.dag
+        for (wire, (edge_id, _), (parent_id, parent_source), (child_id, child_target)) in
+            relevant_edges
+        {
+            self.dag.remove_edge(parent_id);
+            self.dag.add_edge(parent_source, node2, *wire);
+            self.dag.remove_edge(edge_id);
+            self.dag.add_edge(node2, node1, *wire);
+            self.dag.remove_edge(child_id);
+            self.dag.add_edge(node1, child_target, *wire);
         }
         Ok(())
     }
