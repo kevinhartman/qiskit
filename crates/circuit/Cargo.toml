@@ -15,6 +15,7 @@ rustworkx-core = { git = "https://github.com/Qiskit/rustworkx.git" }
 num-complex.workspace = true
 ndarray.workspace = true
 numpy.workspace = true
+thiserror.workspace = true
 
 [dependencies.pyo3]
 workspace = true

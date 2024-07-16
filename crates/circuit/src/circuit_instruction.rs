@@ -10,19 +10,25 @@
 // copyright notice, and modified files need to carry a notice indicating
 // that they have been altered from the originals.
 
+#[cfg(feature = "cache_pygates")]
+use std::cell::RefCell;
+
+use numpy::IntoPyArray;
 use pyo3::basic::CompareOp;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyDeprecationWarning, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{IntoPyDict, PyList, PyTuple, PyType};
 use pyo3::{intern, IntoPy, PyObject, PyResult};
 use smallvec::{smallvec, SmallVec};
 
 use crate::imports::{
-    get_std_gate_class, populate_std_gate_map, GATE, INSTRUCTION, OPERATION,
-    SINGLETON_CONTROLLED_GATE, SINGLETON_GATE,
+    get_std_gate_class, populate_std_gate_map, CONTROLLED_GATE, GATE, INSTRUCTION, OPERATION,
+    SINGLETON_CONTROLLED_GATE, SINGLETON_GATE, WARNINGS_WARN,
 };
 use crate::interner::Index;
-use crate::operations::{OperationType, Param, PyGate, PyInstruction, PyOperation, StandardGate};
+use crate::operations::{
+    Operation, OperationType, Param, PyGate, PyInstruction, PyOperation, StandardGate,
+};
 use crate::{Clbit, Qubit};
 
 /// These are extra mutable attributes for a circuit instruction's state. In general we don't
@@ -39,7 +45,7 @@ pub struct ExtraInstructionAttributes {
 
 /// Private type used to store instructions with interned arg lists.
 #[derive(Clone, Debug)]
-pub(crate) struct PackedInstruction {
+pub struct PackedInstruction {
     /// The Python-side operation instance.
     pub op: OperationType,
     /// The index under which the interner has stored `qubits`.
@@ -48,8 +54,13 @@ pub(crate) struct PackedInstruction {
     pub clbits_id: Index,
     pub params: SmallVec<[Param; 3]>,
     pub extra_attrs: Option<Box<ExtraInstructionAttributes>>,
+
     #[cfg(feature = "cache_pygates")]
-    pub py_op: Option<PyObject>,
+    /// This is hidden in a `RefCell` because, while that has additional memory-usage implications
+    /// while we're still building with the feature enabled, we intend to remove the feature in the
+    /// future, and hiding the cache within a `RefCell` lets us keep the cache transparently in our
+    /// interfaces, without needing various functions to unnecessarily take `&mut` references.
+    pub py_op: RefCell<Option<PyObject>>,
 }
 
 impl PackedInstruction {
@@ -82,7 +93,7 @@ impl PackedInstruction {
             params,
             extra_attrs,
             #[cfg(feature = "cache_pygates")]
-            py_op,
+            py_op: RefCell::new(py_op),
         }
     }
 
@@ -96,6 +107,52 @@ impl PackedInstruction {
         self.params
             .iter()
             .any(|x| matches!(x, Param::ParameterExpression(_)))
+    }
+
+    /// Build a reference to the Python-space operation object (the `Gate`, etc) packed into this
+    /// instruction.  This may construct the reference if the `PackedInstruction` is a standard
+    /// gate with no already stored operation.
+    ///
+    /// A standard-gate operation object returned by this function is disconnected from the
+    /// containing circuit; updates to its label, duration, unit and condition will not be
+    /// propagated back.
+    pub fn unpack_py_op(&self, py: Python) -> PyResult<Py<PyAny>> {
+        #[cfg(feature = "cache_pygates")]
+        {
+            if let Some(cached_op) = self.py_op.borrow().as_ref() {
+                return Ok(cached_op.clone_ref(py));
+            }
+        }
+        let (label, duration, unit, condition) = match self.extra_attrs.as_deref() {
+            Some(ExtraInstructionAttributes {
+                label,
+                duration,
+                unit,
+                condition,
+            }) => (
+                label.as_deref(),
+                duration.as_ref(),
+                unit.as_deref(),
+                condition.as_ref(),
+            ),
+            None => (None, None, None, None),
+        };
+        let out = operation_type_and_data_to_py(
+            py,
+            &self.op,
+            &self.params,
+            label,
+            duration,
+            unit,
+            condition,
+        )?;
+        #[cfg(feature = "cache_pygates")]
+        {
+            if let Ok(mut cell) = self.py_op.try_borrow_mut() {
+                cell.get_or_insert_with(|| out.clone_ref(py));
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -399,6 +456,62 @@ impl CircuitInstruction {
         })
     }
 
+    #[getter]
+    fn _raw_op(&self, py: Python) -> PyObject {
+        self.operation.clone().into_py(py)
+    }
+
+    /// Returns the Instruction name corresponding to the op for this node
+    #[getter]
+    fn get_name(&self, py: Python) -> PyObject {
+        self.operation.name().to_object(py)
+    }
+
+    #[getter]
+    fn get_params(&self, py: Python) -> PyObject {
+        self.params.to_object(py)
+    }
+
+    #[getter]
+    fn matrix(&self, py: Python) -> Option<PyObject> {
+        let matrix = self.operation.matrix(&self.params);
+        matrix.map(|mat| mat.into_pyarray_bound(py).into())
+    }
+
+    #[getter]
+    fn label(&self) -> Option<&str> {
+        self.extra_attrs
+            .as_ref()
+            .and_then(|attrs| attrs.label.as_deref())
+    }
+
+    #[getter]
+    fn condition(&self, py: Python) -> Option<PyObject> {
+        self.extra_attrs
+            .as_ref()
+            .and_then(|attrs| attrs.condition.as_ref().map(|x| x.clone_ref(py)))
+    }
+
+    #[getter]
+    fn duration(&self, py: Python) -> Option<PyObject> {
+        self.extra_attrs
+            .as_ref()
+            .and_then(|attrs| attrs.duration.as_ref().map(|x| x.clone_ref(py)))
+    }
+
+    #[getter]
+    fn unit(&self) -> Option<&str> {
+        self.extra_attrs
+            .as_ref()
+            .and_then(|attrs| attrs.unit.as_deref())
+    }
+
+    pub fn is_parameterized(&self) -> bool {
+        self.params
+            .iter()
+            .any(|x| matches!(x, Param::ParameterExpression(_)))
+    }
+
     /// Creates a shallow copy with the given fields replaced.
     ///
     /// Returns:
@@ -534,7 +647,11 @@ impl CircuitInstruction {
 
         Ok(PyTuple::new_bound(
             py,
-            [op, self.qubits.to_object(py), self.clbits.to_object(py)],
+            [
+                op,
+                self.qubits.bind(py).to_list().into(),
+                self.clbits.bind(py).to_list().into(),
+            ],
         ))
     }
 
@@ -550,32 +667,41 @@ impl CircuitInstruction {
         };
         Ok(PyTuple::new_bound(
             py,
-            [op, self.qubits.to_object(py), self.clbits.to_object(py)],
+            [
+                op,
+                self.qubits.bind(py).to_list().into(),
+                self.clbits.bind(py).to_list().into(),
+            ],
         ))
     }
 
     #[cfg(not(feature = "cache_pygates"))]
     pub fn __getitem__(&self, py: Python<'_>, key: &Bound<PyAny>) -> PyResult<PyObject> {
+        warn_on_legacy_circuit_instruction_iteration(py)?;
         Ok(self._legacy_format(py)?.as_any().get_item(key)?.into_py(py))
     }
 
     #[cfg(feature = "cache_pygates")]
     pub fn __getitem__(&mut self, py: Python<'_>, key: &Bound<PyAny>) -> PyResult<PyObject> {
+        warn_on_legacy_circuit_instruction_iteration(py)?;
         Ok(self._legacy_format(py)?.as_any().get_item(key)?.into_py(py))
     }
 
     #[cfg(not(feature = "cache_pygates"))]
     pub fn __iter__(&self, py: Python<'_>) -> PyResult<PyObject> {
+        warn_on_legacy_circuit_instruction_iteration(py)?;
         Ok(self._legacy_format(py)?.as_any().iter()?.into_py(py))
     }
 
     #[cfg(feature = "cache_pygates")]
     pub fn __iter__(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+        warn_on_legacy_circuit_instruction_iteration(py)?;
         Ok(self._legacy_format(py)?.as_any().iter()?.into_py(py))
     }
 
-    pub fn __len__(&self) -> usize {
-        3
+    pub fn __len__(&self, py: Python) -> PyResult<usize> {
+        warn_on_legacy_circuit_instruction_iteration(py)?;
+        Ok(3)
     }
 
     pub fn __richcmp__(
@@ -707,27 +833,24 @@ impl CircuitInstruction {
 
 /// Take a reference to a `CircuitInstruction` and convert the operation
 /// inside that to a python side object.
-pub(crate) fn operation_type_to_py(
-    py: Python,
-    circuit_inst: &CircuitInstruction,
-) -> PyResult<PyObject> {
+pub fn operation_type_to_py(py: Python, circuit_inst: &CircuitInstruction) -> PyResult<PyObject> {
     let (label, duration, unit, condition) = match &circuit_inst.extra_attrs {
         None => (None, None, None, None),
         Some(extra_attrs) => (
-            extra_attrs.label.clone(),
-            extra_attrs.duration.clone(),
-            extra_attrs.unit.clone(),
-            extra_attrs.condition.clone(),
+            extra_attrs.label.as_deref(),
+            extra_attrs.duration.as_ref(),
+            extra_attrs.unit.as_deref(),
+            extra_attrs.condition.as_ref(),
         ),
     };
     operation_type_and_data_to_py(
         py,
         &circuit_inst.operation,
         &circuit_inst.params,
-        &label,
-        &duration,
-        &unit,
-        &condition,
+        label,
+        duration,
+        unit,
+        condition,
     )
 }
 
@@ -736,14 +859,14 @@ pub(crate) fn operation_type_to_py(
 /// a Python side full-fat Qiskit operation as a PyObject. This is typically
 /// used by accessor functions that need to return an operation to Qiskit, such
 /// as accesing `CircuitInstruction.operation`.
-pub(crate) fn operation_type_and_data_to_py(
+pub fn operation_type_and_data_to_py(
     py: Python,
     operation: &OperationType,
     params: &[Param],
-    label: &Option<String>,
-    duration: &Option<PyObject>,
-    unit: &Option<String>,
-    condition: &Option<PyObject>,
+    label: Option<&str>,
+    duration: Option<&PyObject>,
+    unit: Option<&str>,
+    condition: Option<&PyObject>,
 ) -> PyResult<PyObject> {
     match &operation {
         OperationType::Standard(op) => {
@@ -775,8 +898,8 @@ pub(crate) fn operation_type_and_data_to_py(
 
 /// A container struct that contains the output from the Python object to
 /// conversion to construct a CircuitInstruction object
-#[derive(Debug)]
-pub(crate) struct OperationTypeConstruct {
+#[derive(Debug, Clone)]
+pub struct OperationTypeConstruct {
     pub operation: OperationType,
     pub params: SmallVec<[Param; 3]>,
     pub label: Option<String>,
@@ -788,7 +911,7 @@ pub(crate) struct OperationTypeConstruct {
 /// Convert an inbound Python object for a Qiskit operation and build a rust
 /// representation of that operation. This will map it to appropriate variant
 /// of operation type based on class
-pub(crate) fn convert_py_to_operation_type(
+pub fn convert_py_to_operation_type(
     py: Python,
     py_op: PyObject,
 ) -> PyResult<OperationTypeConstruct> {
@@ -804,30 +927,52 @@ pub(crate) fn convert_py_to_operation_type(
     };
     let op_type: Bound<PyType> = raw_op_type.into_bound(py);
     let mut standard: Option<StandardGate> = match op_type.getattr(attr) {
-        Ok(stdgate) => match stdgate.extract().ok() {
-            Some(gate) => gate,
-            None => None,
-        },
+        Ok(stdgate) => stdgate.extract().ok().unwrap_or_default(),
         Err(_) => None,
     };
-    // If the input instruction is a standard gate and a singleton instance
+    // If the input instruction is a standard gate and a singleton instance,
     // we should check for mutable state. A mutable instance should be treated
     // as a custom gate not a standard gate because it has custom properties.
-    //
-    // In the futuer we can revisit this when we've dropped `duration`, `unit`,
+    // Controlled gates with non-default control states are also considered
+    // custom gates even if a standard representation exists for the default
+    // control state.
+
+    // In the future we can revisit this when we've dropped `duration`, `unit`,
     // and `condition` from the api as we should own the label in the
     // `CircuitInstruction`. The other piece here is for controlled gates there
     // is the control state, so for `SingletonControlledGates` we'll still need
     // this check.
     if standard.is_some() {
         let mutable: bool = py_op.getattr(py, intern!(py, "mutable"))?.extract(py)?;
-        if mutable
+        // The default ctrl_states are the all 1 state and None.
+        // These are the only cases where controlled gates can be standard.
+        let is_default_ctrl_state = || -> PyResult<bool> {
+            match py_op.getattr(py, intern!(py, "ctrl_state")) {
+                Ok(c_state) => match c_state.extract::<Option<i32>>(py) {
+                    Ok(c_state_int) => match c_state_int {
+                        Some(c_int) => {
+                            let qubits: u32 =
+                                py_op.getattr(py, intern!(py, "num_qubits"))?.extract(py)?;
+                            Ok(c_int == (2_i32.pow(qubits - 1) - 1))
+                        }
+                        None => Ok(true),
+                    },
+                    Err(_) => Ok(false),
+                },
+                Err(_) => Ok(false),
+            }
+        };
+
+        if (mutable
             && (py_op_bound.is_instance(SINGLETON_GATE.get_bound(py))?
-                || py_op_bound.is_instance(SINGLETON_CONTROLLED_GATE.get_bound(py))?)
+                || py_op_bound.is_instance(SINGLETON_CONTROLLED_GATE.get_bound(py))?))
+            || (py_op_bound.is_instance(CONTROLLED_GATE.get_bound(py))?
+                && !is_default_ctrl_state()?)
         {
             standard = None;
         }
     }
+
     if let Some(op) = standard {
         let base_class = op_type.to_object(py);
         populate_std_gate_map(py, op, base_class);
@@ -922,4 +1067,30 @@ pub(crate) fn convert_py_to_operation_type(
         });
     }
     Err(PyValueError::new_err(format!("Invalid input: {}", py_op)))
+}
+
+/// Issue a Python `DeprecationWarning` about using the legacy tuple-like interface to
+/// `CircuitInstruction`.
+///
+/// Beware the `stacklevel` here doesn't work quite the same way as it does in Python as Rust-space
+/// calls are completely transparent to Python.
+#[inline]
+fn warn_on_legacy_circuit_instruction_iteration(py: Python) -> PyResult<()> {
+    WARNINGS_WARN
+        .get_bound(py)
+        .call1((
+            intern!(
+                py,
+                concat!(
+                    "Treating CircuitInstruction as an iterable is deprecated legacy behavior",
+                    " since Qiskit 1.2, and will be removed in Qiskit 2.0.",
+                    " Instead, use the `operation`, `qubits` and `clbits` named attributes."
+                )
+            ),
+            py.get_type_bound::<PyDeprecationWarning>(),
+            // Stack level.  Compared to Python-space calls to `warn`, this is unusually low
+            // beacuse all our internal call structure is now Rust-space and invisible to Python.
+            1,
+        ))
+        .map(|_| ())
 }
