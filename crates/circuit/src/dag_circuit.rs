@@ -20,7 +20,7 @@ use crate::dag_node::{DAGInNode, DAGNode, DAGOpNode, DAGOutNode};
 use crate::dot_utils::build_dot;
 use crate::error::DAGCircuitError;
 use crate::imports::{
-    CLASSICAL_REGISTER, CLBIT, CONTROL_FLOW_OP, DAG_NODE, EXPR, ITER_VARS, STORE_OP,
+    CLASSICAL_REGISTER, CLBIT, CONTROL_FLOW_OP, DAG_NODE, EXPR, ITER_VARS, QUBIT, STORE_OP,
     SWITCH_CASE_OP, VARIABLE_MAPPER,
 };
 use crate::interner::{Index, IndexedInterner, Interner};
@@ -130,6 +130,25 @@ pub(crate) enum Wire {
     Qubit(Qubit),
     Clbit(Clbit),
     Var(PyObject),
+}
+
+impl Hash for Wire {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Wire::Qubit(q) => {
+                state.write_u8(1);
+                q.hash(state);
+            }
+            Wire::Clbit(c) => {
+                state.write_u8(2);
+                c.hash(state);
+            }
+            Wire::Var(v) => Python::with_gil(|py| {
+                state.write_u8(3);
+                state.write_isize(v.bind(py).hash().unwrap_or(0));
+            }),
+        }
+    }
 }
 
 impl PartialEq for Wire {
@@ -2331,16 +2350,30 @@ def _format(operand):
         self.get_node(py, new_node)
     }
 
+    fn iter_vars(&self, py: Python) -> PyResult<Vec<PyObject>> {
+        todo!()
+    }
+
     /// Replace one node with dag.
     ///
     /// Args:
     ///     node (DAGOpNode): node to substitute
-    ///     input_dag (DAGCircuit): circuit that will substitute the node
+    ///     input_dag (DAGCircuit): circuit that will substitute the node.
     ///     wires (list[Bit] | Dict[Bit, Bit]): gives an order for (qu)bits
     ///         in the input circuit. If a list, then the bits refer to those in the ``input_dag``,
     ///         and the order gets matched to the node wires by qargs first, then cargs, then
     ///         conditions.  If a dictionary, then a mapping of bits in the ``input_dag`` to those
     ///         that the ``node`` acts on.
+    ///
+    ///         Standalone :class:`~.expr.Var` nodes cannot currently be remapped as part of the
+    ///         substitution; the ``input_dag`` should be defined over the correct set of variables
+    ///         already.
+    ///
+    ///         ..
+    ///             The rule about not remapping `Var`s is to avoid performance pitfalls and reduce
+    ///             complexity; the creator of the input DAG should easily be able to arrange for
+    ///             the correct `Var`s to be used, and doing so avoids us needing to recurse through
+    ///             control-flow operations to do deep remappings.
     ///     propagate_condition (bool): If ``True`` (default), then any ``condition`` attribute on
     ///         the operation within ``node`` is propagated to each node in the ``input_dag``.  If
     ///         ``False``, then the ``input_dag`` is assumed to faithfully implement suitable
@@ -2356,14 +2389,67 @@ def _format(operand):
     #[pyo3(signature = (node, input_dag, wires=None, propagate_condition=true))]
     fn substitute_node_with_dag(
         &mut self,
-        node: &Bound<PyAny>,
+        py: Python,
+        node: &DAGNode,
         input_dag: &DAGCircuit,
         wires: Option<Bound<PyAny>>,
         propagate_condition: bool,
-    ) -> Py<PyDict> {
-        // if not isinstance(node, DAGOpNode):
-        //     raise DAGCircuitError(f"expected node DAGOpNode, got {type(node)}")
-        //
+    ) -> PyResult<Py<PyDict>> {
+        let instr = match &self.dag[node.node.unwrap()] {
+            NodeType::Operation(p) => p,
+            _ => {
+                return Err(DAGCircuitError::new_err("expected DAGOpNode"));
+            }
+        };
+        let wire_map = if wires.is_some() && wires.unwrap().is_instance_of::<PyDict>() {
+            todo!()
+        } else {
+            let wires: Vec<Wire> = if let Some(wires) = wires {
+                let wires: Vec<Bound<PyAny>> = wires.extract()?;
+                wires
+                    .into_iter()
+                    .map(|w| {
+                        Ok(if w.is_instance(QUBIT.get_bound(py))? {
+                            Wire::Qubit(input_dag.qubits.find(&w).unwrap())
+                        } else if w.is_instance(CLBIT.get_bound(py))? {
+                            Wire::Clbit(input_dag.clbits.find(&w).unwrap())
+                        } else {
+                            Wire::Var(w.unbind())
+                        })
+                    })
+                    .collect::<PyResult<_>>()?
+            } else {
+                input_dag
+                    .qubits
+                    .into_iter()
+                    .map(|q| Wire::Qubit(*q))
+                    .chain(input_dag.clbits.into_iter().map(|c| Wire::Clbit(*c)))
+                    .chain(input_dag.iter_vars(py)?.into_iter().map(|v| Wire::Var(v)))
+                    .collect()
+            };
+
+            let node_cargs: IndexSet<&Clbit, ahash::RandomState> =
+                IndexSet::from_iter(self.cargs_cache.intern(instr.clbits_id));
+            let mut node_wire_order: Vec<Wire> = self
+                .qargs_cache
+                .intern(instr.qubits_id)
+                .into_iter()
+                .map(Wire::Qubit)
+                .chain(
+                    self.qargs_cache
+                        .intern(instr.clbits_id)
+                        .into_iter()
+                        .map(Wire::Clbit),
+                )
+                .collect();
+
+            if !propagate_condition && self.may_have_additional_wires(py, &instr) {
+                let (clbits, vars) = self.additional_wires(py, &instr)?;
+                for clbit in clbits {
+
+                }
+            }
+        };
         // if isinstance(wires, dict):
         //     wire_map = wires
         // else:
@@ -2372,9 +2458,9 @@ def _format(operand):
         //     node_wire_order = list(node.qargs) + list(node.cargs)
         //     # If we're not propagating it, the number of wires in the input DAG should include the
         //     # condition as well.
-        //     if not propagate_condition and self._operation_may_have_bits(node.op):
+        //     if not propagate_condition and _may_have_additional_wires(node.op):
         //         node_wire_order += [
-        //             bit for bit in self._bits_in_operation(node.op) if bit not in node_cargs
+        //             wire for wire in _additional_wires(node.op) if wire not in node_cargs
         //         ]
         //     if len(wires) != len(node_wire_order):
         //         raise DAGCircuitError(
@@ -2386,12 +2472,27 @@ def _format(operand):
         // for input_dag_wire, our_wire in wire_map.items():
         //     if our_wire not in self.input_map:
         //         raise DAGCircuitError(f"bit mapping invalid: {our_wire} is not in this DAG")
+        //     if isinstance(our_wire, expr.Var) or isinstance(input_dag_wire, expr.Var):
+        //         raise DAGCircuitError("`Var` nodes cannot be remapped during substitution")
         //     # Support mapping indiscriminately between Qubit and AncillaQubit, etc.
         //     check_type = Qubit if isinstance(our_wire, Qubit) else Clbit
         //     if not isinstance(input_dag_wire, check_type):
         //         raise DAGCircuitError(
         //             f"bit mapping invalid: {input_dag_wire} and {our_wire} are different bit types"
         //         )
+        // if _may_have_additional_wires(node.op):
+        //     node_vars = {var for var in _additional_wires(node.op) if isinstance(var, expr.Var)}
+        // else:
+        //     node_vars = set()
+        // dag_vars = set(input_dag.iter_vars())
+        // if dag_vars - node_vars:
+        //     raise DAGCircuitError(
+        //         "Cannot replace a node with a DAG with more variables."
+        //         f" Variables in node: {node_vars}."
+        //         f" Variables in DAG: {dag_vars}."
+        //     )
+        // for var in dag_vars:
+        //     wire_map[var] = var
         //
         // reverse_wire_map = {b: a for a, b in wire_map.items()}
         // # It doesn't make sense to try and propagate a condition from a control-flow op; a
@@ -2470,14 +2571,22 @@ def _format(operand):
         //             node._node_id, lambda edge, wire=self_wire: edge == wire
         //         )[0]
         //         self._multi_graph.add_edge(pred._node_id, succ._node_id, self_wire)
+        // for contracted_var in node_vars - dag_vars:
+        //     pred = self._multi_graph.find_predecessors_by_edge(
+        //         node._node_id, lambda edge, wire=contracted_var: edge == wire
+        //     )[0]
+        //     succ = self._multi_graph.find_successors_by_edge(
+        //         node._node_id, lambda edge, wire=contracted_var: edge == wire
+        //     )[0]
+        //     self._multi_graph.add_edge(pred._node_id, succ._node_id, contracted_var)
         //
-        // # Exlude any nodes from in_dag that are not a DAGOpNode or are on
-        // # bits outside the set specified by the wires kwarg
+        // # Exclude any nodes from in_dag that are not a DAGOpNode or are on
+        // # wires outside the set specified by the wires kwarg
         // def filter_fn(node):
         //     if not isinstance(node, DAGOpNode):
         //         return False
-        //     for qarg in node.qargs:
-        //         if qarg not in wire_map:
+        //     for _, _, wire in in_dag.edges(node):
+        //         if wire not in wire_map:
         //             return False
         //     return True
         //
@@ -2511,10 +2620,10 @@ def _format(operand):
         // node_map = self._multi_graph.substitute_node_with_subgraph(
         //     node._node_id, in_dag._multi_graph, edge_map_fn, filter_fn, edge_weight_map
         // )
-        // self._decrement_op(node.op)
+        // self._decrement_op(node.name)
         //
         // variable_mapper = _classical_resource_map.VariableMapper(
-        //     self.cregs.values(), wire_map, self.add_creg
+        //     self.cregs.values(), wire_map, add_register=self.add_creg
         // )
         // # Iterate over nodes of input_circuit and update wires in node objects migrated
         // # from in_dag
@@ -2542,7 +2651,7 @@ def _format(operand):
         //     new_node = DAGOpNode(m_op, qargs=m_qargs, cargs=m_cargs, dag=self)
         //     new_node._node_id = new_node_index
         //     self._multi_graph[new_node_index] = new_node
-        //     self._increment_op(new_node.op)
+        //     self._increment_op(new_node.name)
         //
         // return {k: self._multi_graph[v] for k, v in node_map.items()}
         todo!()
