@@ -445,6 +445,7 @@ impl DAGOpNode {
 }
 
 /// Object to represent an incoming wire node in the DAGCircuit.
+#[derive(Clone, Debug)]
 #[pyclass(module = "qiskit._accelerate.circuit", extends=DAGNode)]
 pub struct DAGInNode {
     #[pyo3(get)]
@@ -497,6 +498,7 @@ impl DAGInNode {
 }
 
 /// Object to represent an outgoing wire node in the DAGCircuit.
+#[derive(Clone, Debug)]
 #[pyclass(module = "qiskit._accelerate.circuit", extends=DAGNode)]
 pub struct DAGOutNode {
     #[pyo3(get)]

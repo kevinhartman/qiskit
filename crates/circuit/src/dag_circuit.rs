@@ -147,6 +147,63 @@ impl PartialEq for Wire {
 
 impl Eq for Wire {}
 
+#[derive(Clone, Debug)]
+enum _DAGVarType {
+    INPUT,
+    CAPTURE,
+    DECLARE,
+}
+
+#[derive(Clone, Debug)]
+struct _DAGVarInfo {
+    var: PyObject,
+    type_: _DAGVarType,
+    in_node: DAGInNode,
+    out_node: DAGOutNode,
+}
+
+type VarType = Py<PyObject>;
+
+// struct to help implement this:
+// self._vars_by_type: dict[_DAGVarType, set[expr.Var]] = {
+// TODO: dev comment
+#[derive(Clone, Debug)]
+struct VarsByType {
+    input: Vec<VarType>,
+    capture: Vec<VarType>,
+    declare: Vec<VarType>,
+}
+
+impl VarsByType {
+    fn new() -> Self {
+        VarsByType {
+            input: Vec::<VarType>::new(),
+            capture: Vec::<VarType>::new(),
+            declare: Vec::<VarType>::new()
+        }
+    }
+
+    fn from_dag_var_type(&self, ty: _DAGVarType) -> &Vec<VarType> {
+        match ty {
+            _DAGVarType::INPUT => &self.input,
+            _DAGVarType::CAPTURE => &self.capture,
+            _DAGVarType::DECLARE => &self.declare,
+        }
+    }
+
+    fn add_input_var(&mut self, var: VarType) {
+        self.input.push(var);
+    }
+
+    fn add_capture_var(&mut self, var: VarType) {
+        self.capture.push(var);
+    }
+
+    fn add_declare_var(&mut self, var: VarType) {
+        self.declare.push(var);
+    }
+}
+
 // TODO: Remove me.
 // This is a temporary map type used to store a mapping of
 // Var to NodeIndex to hold us over until Var is ported to
@@ -259,6 +316,16 @@ pub struct DAGCircuit {
     clbit_input_map: IndexMap<Clbit, NodeIndex>,
     /// Map from clbit to output nodes of the graph.
     clbit_output_map: IndexMap<Clbit, NodeIndex>,
+
+    // Tracking for the classical variables used in the circuit.  This contains the information
+    // needed to insert new nodes.  This is keyed by the name rather than the `Var` instance
+    // itself so we can ensure we don't allow shadowing or redefinition of names.
+    _vars_info: HashMap<String, _DAGVarInfo>,
+
+   // Convenience stateful tracking for the individual types of nodes to allow things like
+   // comparisons between circuits to take place without needing to disambiguate the
+   // graph-specific usage information.
+    _vars_by_type: VarsByType,
 
     // TODO: use IndexMap<Wire, NodeIndex> once Var is ported to Rust
     /// Map from var to input nodes of the graph.
@@ -465,6 +532,8 @@ impl DAGCircuit {
             qubit_output_map: IndexMap::new(),
             clbit_input_map: IndexMap::new(),
             clbit_output_map: IndexMap::new(),
+            _vars_info: HashMap::new(),
+            _vars_by_type: VarsByType::new(),
             var_input_map: _VarIndexMap::new(py),
             var_output_map: _VarIndexMap::new(py),
             op_names: HashMap::new(),
@@ -474,6 +543,10 @@ impl DAGCircuit {
             circuit_module: PyCircuitModule::new(py)?,
         })
     }
+
+    // fn _add_input_var(&self, py: Python, var: PyObject) {
+    //     let in_node = DAGInNode::new(py, id, self.qubits.get(*qubit).unwrap().clone_ref(py));
+    // }
 
     /// Returns the current sequence of registered :class:`.Qubit` instances as a list.
     ///
