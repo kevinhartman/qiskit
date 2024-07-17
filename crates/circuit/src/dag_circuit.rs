@@ -2556,7 +2556,7 @@ def _format(operand):
         let node1 = node1.node.unwrap();
         let node2 = node2.node.unwrap();
 
-        // Gather all wires connecting node1 and node1.
+        // Gather all wires connecting node1 and node2.
         // This functionality was extracted from rustworkx's 'get_edge_data'
         let wires: Vec<Wire> = self
             .dag
@@ -2571,7 +2571,7 @@ def _format(operand):
             ));
         };
 
-        // Closure that finds the first parent/child node connected to a reference node by given wire,
+        // Closure that finds the first parent/child node connected to a reference node by given wire
         // and returns relevant edge information depending on the specified direction:
         //  - Incoming -> parent -> outputs (parent_edge_id, parent_source_node_id)
         //  - Outgoing -> child -> outputs (child_edge_id, child_target_node_id)
