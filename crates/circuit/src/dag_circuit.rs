@@ -2771,27 +2771,7 @@ def _format(operand):
                             node_map.insert(*node, var_out);
                         }
                         NodeType::Operation(pi) => {
-                            let qubits = self.qargs_cache.intern(pi.qubits_id);
-                            let clbits = self.cargs_cache.intern(pi.clbits_id);
-                            let qubits_id =
-                                Interner::intern(&mut new_dag.qargs_cache, qubits.clone())?;
-                            let clbits_id =
-                                Interner::intern(&mut new_dag.cargs_cache, clbits.clone())?;
-
-                            let extr_attr = pi.extra_attrs.clone().unwrap();
-                            let new_pi = NodeType::Operation(PackedInstruction::new(
-                                pi.op.clone(),
-                                qubits_id,
-                                clbits_id,
-                                pi.params.clone(),
-                                extr_attr.label,
-                                extr_attr.duration,
-                                extr_attr.unit,
-                                extr_attr.condition,
-                                #[cfg(feature = "cache_pygates")]
-                                pi.py_op.borrow().clone(),
-                            ));
-                            let new_node = new_dag.dag.add_node(new_pi);
+                            let new_node = new_dag.dag.add_node(NodeType::Operation(pi.clone()));
                             node_map.insert(*node, new_node);
                             non_classical = true;
                         }
