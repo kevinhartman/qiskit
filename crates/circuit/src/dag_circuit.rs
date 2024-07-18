@@ -54,6 +54,7 @@ use std::convert::Infallible;
 use std::f64::consts::PI;
 use std::ffi::c_double;
 use std::hash::{Hash, Hasher};
+use std::intrinsics::unreachable;
 
 trait IntoUnique {
     type Output;
@@ -2556,6 +2557,15 @@ def _format(operand):
         let node1 = node1.node.unwrap();
         let node2 = node2.node.unwrap();
 
+        // Check that both nodes correspond to operations
+        if !matches!(self.dag.node_weight(node1).unwrap(), NodeType::Operation(_))
+            || !matches!(self.dag.node_weight(node2).unwrap(), NodeType::Operation(_))
+        {
+            return Err(DAGCircuitError::new_err(
+                "Nodes to swap are not both DAGOpNodes",
+            ));
+        }
+
         // Gather all wires connecting node1 and node2.
         // This functionality was extracted from rustworkx's 'get_edge_data'
         let wires: Vec<Wire> = self
@@ -2576,21 +2586,17 @@ def _format(operand):
         //  - Incoming -> parent -> outputs (parent_edge_id, parent_source_node_id)
         //  - Outgoing -> child -> outputs (child_edge_id, child_target_node_id)
         // This functionality was inspired in rustworkx's 'find_predecessors_by_edge' and 'find_successors_by_edge'.
-        // To understand name, see: https://en.wikipedia.org/wiki/Oyakodon
-        let find_first_oyako_by_wire =
-            |node: NodeIndex, direction: Direction, wire: &Wire| {
-                let mut oyakosan = Vec::new();
-                for edge in self.dag.edges_directed(node, direction) {
-                    if wire == edge.weight() {
-                        match direction {
-                            Incoming => { return (edge.id(), edge.source()) },
-                            Outgoing => oyakosan.push((edge.id(), edge.target())),
-                        };
-                        break;
+        let directed_edge_for_wire = |node: NodeIndex, direction: Direction, wire: &Wire| {
+            for edge in self.dag.edges_directed(node, direction) {
+                if wire == edge.weight() {
+                    match direction {
+                        Incoming => return Some((edge.id(), edge.source())),
+                        Outgoing => return Some((edge.id(), edge.target())),
                     }
                 }
-                oyakosan[0]
-            };
+            }
+            None
+        };
 
         // Vector that contains a tuple of (wire, edge_info, parent_info, child_info) per wire in wires
         let relevant_edges = wires
@@ -2599,9 +2605,9 @@ def _format(operand):
             .map(|wire| {
                 (
                     wire,
-                    find_first_oyako_by_wire((node1, Outgoing, wire)),
-                    find_first_oyako_by_wire((node1, Incoming, wire)),
-                    find_first_oyako_by_wire((node2, Outgoing, wire)),
+                    directed_edge_for_wire(node1, Outgoing, wire).unwrap(),
+                    directed_edge_for_wire(node1, Incoming, wire).unwrap(),
+                    directed_edge_for_wire(node2, Outgoing, wire).unwrap(),
                 )
             })
             .collect::<Vec<_>>();
