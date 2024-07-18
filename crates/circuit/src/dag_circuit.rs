@@ -2578,12 +2578,12 @@ def _format(operand):
         // This functionality was inspired in rustworkx's 'find_predecessors_by_edge' and 'find_successors_by_edge'.
         // To understand name, see: https://en.wikipedia.org/wiki/Oyakodon
         let find_first_oyako_by_wire =
-            |(node, direction, &ref wire): (NodeIndex, Direction, &Wire)| {
+            |node: NodeIndex, direction: Direction, wire: &Wire| {
                 let mut oyakosan = Vec::new();
                 for edge in self.dag.edges_directed(node, direction) {
                     if wire == edge.weight() {
                         match direction {
-                            Incoming => oyakosan.push((edge.id(), edge.source())),
+                            Incoming => { return (edge.id(), edge.source()) },
                             Outgoing => oyakosan.push((edge.id(), edge.target())),
                         };
                         break;
@@ -2607,15 +2607,15 @@ def _format(operand):
             .collect::<Vec<_>>();
 
         // Iterate over relevant edges and modify self.dag
-        for (wire, (edge_id, _), (parent_id, parent_source), (child_id, child_target)) in
+        for (wire, (node1_to_node2, _), (parent_to_node1, parent), (node2_to_child, child)) in
             relevant_edges
         {
-            self.dag.remove_edge(parent_id);
-            self.dag.add_edge(parent_source, node2, *wire);
-            self.dag.remove_edge(edge_id);
+            self.dag.remove_edge(parent_to_node1);
+            self.dag.add_edge(parent, node2, *wire);
+            self.dag.remove_edge(node1_to_node2);
             self.dag.add_edge(node2, node1, *wire);
-            self.dag.remove_edge(child_id);
-            self.dag.add_edge(node1, child_target, *wire);
+            self.dag.remove_edge(node2_to_child);
+            self.dag.add_edge(node1, child, *wire);
         }
         Ok(())
     }
