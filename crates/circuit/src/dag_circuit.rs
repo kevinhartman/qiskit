@@ -1979,8 +1979,14 @@ def _format(operand):
                 None => return Err(DAGCircuitError::new_err("not a DAG")),
             }
         };
-        let _depth = depth_plus_one.checked_sub(1);
-        Ok(_depth.unwrap_or(0))
+        if depth_plus_one == 0 {
+            Ok(0)
+        } else if depth_plus_one > 0 {
+            Ok(depth_plus_one - 1)
+        } else {
+            // Correctly computed longest path is non-negative
+            unreachable!()
+        }
     }
 
     /// Return the total number of qubits + clbits used by the circuit.
