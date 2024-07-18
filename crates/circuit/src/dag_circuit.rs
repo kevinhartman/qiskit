@@ -1441,13 +1441,25 @@ def _format(operand):
     ///     clbits (list[Clbit|int]): clbits of self to compose onto.
     ///     front (bool): If True, front composition will be performed (not implemented yet)
     ///     inplace (bool): If True, modify the object. Otherwise return composed circuit.
+    ///     inline_captures (bool): If ``True``, variables marked as "captures" in the ``other`` DAG
+    ///         will be inlined onto existing uses of those same variables in ``self``.  If ``False``,
+    ///         all variables in ``other`` are required to be distinct from ``self``, and they will
+    ///         be added to ``self``.
+    ///
+    /// ..
+    ///     Note: unlike `QuantumCircuit.compose`, there's no `var_remap` argument here.  That's
+    ///     because the `DAGCircuit` inner-block structure isn't set up well to allow the recursion,
+    ///     and `DAGCircuit.compose` is generally only used to rebuild a DAG from layers within
+    ///     itself than to join unrelated circuits.  While there's no strong motivating use-case
+    ///     (unlike the `QuantumCircuit` equivalent), it's safer and more performant to not provide
+    ///     the option.
     ///
     /// Returns:
-    ///     DAGCircuit: the composed dag (returns None if inplace==True).
+    ///    DAGCircuit: the composed dag (returns None if inplace==True).
     ///
     /// Raises:
     ///     DAGCircuitError: if ``other`` is wider or there are duplicate edge mappings.
-    #[pyo3(signature = (other, qubits=None, clbits=None, front=false, inplace=true))]
+    #[pyo3(signature = (other, qubits=None, clbits=None, front=false, inplace=true, *, inline_captures=false))]
     fn compose(
         slf: PyRefMut<Self>,
         py: Python,
@@ -1456,6 +1468,7 @@ def _format(operand):
         clbits: Option<Bound<PyList>>,
         front: bool,
         inplace: bool,
+        inline_captures: bool,
     ) -> PyResult<Option<PyObject>> {
         if front {
             return Err(DAGCircuitError::new_err(
@@ -1571,6 +1584,33 @@ def _format(operand):
                 .update(&cals.bind(py).as_mapping())?;
         }
 
+        // This is all the handling we need for realtime variables, if there's no remapping. They:
+        //
+        // * get added to the DAG and then operations involving them get appended on normally.
+        // * get inlined onto an existing variable, then operations get appended normally.
+        // * there's a clash or a failed inlining, and we just raise an error.
+        //
+        // Notably if there's no remapping, there's no need to recurse into control-flow or to do any
+        // Var rewriting during the Expr visits.
+        for var in other.iter_input_vars(py)?.bind(py) {
+            dag.add_input_var(py, &var?)?;
+        }
+        if inline_captures {
+            for var in other.iter_captured_vars(py)?.bind(py) {
+                let var = var?;
+                if !dag.has_var(&var)? {
+                    return Err(DAGCircuitError::new_err(format!("Variable '{}' to be inlined is not in the base DAG. If you wanted it to be automatically added, use `inline_captures=False`.", var)));
+                }
+            }
+        } else {
+            for var in other.iter_captured_vars(py)?.bind(py) {
+                dag.add_captured_var(py, &var?)?;
+            }
+        }
+        for var in other.iter_declared_vars(py)?.bind(py) {
+            dag.add_declared_var(&var?)?;
+        }
+
         let variable_mapper = PyVariableMapper::new(
             py,
             dag.cregs.bind(py).values().into_any(),
@@ -1668,99 +1708,13 @@ def _format(operand):
                         false,
                     )?;
                 }
-                NodeType::VarIn(var) => {
-                    todo!()
-                }
-                NodeType::VarOut(var) => {
-                    todo!()
-                }
-                NodeType::QubitOut(_) | NodeType::ClbitOut(_) => (),
+                // If its a Var wire, we already checked that it exists in the destination.
+                NodeType::VarIn(_)
+                | NodeType::VarOut(_)
+                | NodeType::QubitOut(_)
+                | NodeType::ClbitOut(_) => (),
             }
         }
-        // if qubits is None:
-        //     qubit_map = identity_qubit_map
-        // elif len(qubits) != len(other.qubits):
-        //     raise DAGCircuitError
-        // else:
-        //     qubit_map = {
-        //         other.qubits[i]: (self.qubits[q] if isinstance(q, int) else q)
-        //         for i, q in enumerate(qubits)
-        //     }
-        // if clbits is None:
-        //     clbit_map = identity_clbit_map
-        // elif len(clbits) != len(other.clbits):
-        //     raise DAGCircuitError(
-        //         "Number of items in clbits parameter does not"
-        //         " match number of clbits in the circuit."
-        //     )
-        // else:
-        //     clbit_map = {
-        //         other.clbits[i]: (self.clbits[c] if isinstance(c, int) else c)
-        //         for i, c in enumerate(clbits)
-        //     }
-        // edge_map = {**qubit_map, **clbit_map} or None
-        //
-        // # if no edge_map, try to do a 1-1 mapping in order
-        // if edge_map is None:
-        //     edge_map = {**identity_qubit_map, **identity_clbit_map}
-        //
-        // # Check the edge_map for duplicate values
-        // if len(set(edge_map.values())) != len(edge_map):
-        //     raise DAGCircuitError("duplicates in wire_map")
-        //
-        // # Compose
-        // if inplace:
-        //     dag = self
-        // else:
-        //     dag = copy.deepcopy(self)
-        // dag.global_phase += other.global_phase
-        //
-        // for gate, cals in other.calibrations.items():
-        //     dag._calibrations[gate].update(cals)
-        //
-        // # Ensure that the error raised here is a `DAGCircuitError` for backwards compatibility.
-        // def _reject_new_register(reg):
-        //     raise DAGCircuitError(f"No register with '{reg.bits}' to map this expression onto.")
-        //
-        // variable_mapper = _classical_resource_map.VariableMapper(
-        //     dag.cregs.values(), edge_map, _reject_new_register
-        // )
-        // for nd in other.topological_nodes():
-        //     if isinstance(nd, DAGInNode):
-        //         # if in edge_map, get new name, else use existing name
-        //         m_wire = edge_map.get(nd.wire, nd.wire)
-        //         # the mapped wire should already exist
-        //         if m_wire not in dag.output_map:
-        //             raise DAGCircuitError(
-        //                 "wire %s[%d] not in self" % (m_wire.register.name, m_wire.index)
-        //             )
-        //         if nd.wire not in other._wires:
-        //             raise DAGCircuitError(
-        //                 "inconsistent wire type for %s[%d] in other"
-        //                 % (nd.register.name, nd.wire.index)
-        //             )
-        //     elif isinstance(nd, DAGOutNode):
-        //         # ignore output nodes
-        //         pass
-        //     elif isinstance(nd, DAGOpNode):
-        //         m_qargs = [edge_map.get(x, x) for x in nd.qargs]
-        //         m_cargs = [edge_map.get(x, x) for x in nd.cargs]
-        //         op = nd.op.copy()
-        //         if (condition := getattr(op, "condition", None)) is not None:
-        //             if not isinstance(op, ControlFlowOp):
-        //                 op = op.c_if(*variable_mapper.map_condition(condition, allow_reorder=True))
-        //             else:
-        //                 op.condition = variable_mapper.map_condition(condition, allow_reorder=True)
-        //         elif isinstance(op, SwitchCaseOp):
-        //             op.target = variable_mapper.map_target(op.target)
-        //         dag.apply_operation_back(op, m_qargs, m_cargs, check=False)
-        //     else:
-        //         raise DAGCircuitError("bad node type %s" % type(nd))
-        //
-        // if not inplace:
-        //     return dag
-        // else:
-        //     return None
 
         if !inplace {
             Ok(Some(dag.into_py(py)))
