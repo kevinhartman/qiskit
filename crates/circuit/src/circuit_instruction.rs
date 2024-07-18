@@ -29,7 +29,6 @@ use crate::interner::Index;
 use crate::operations::{
     Operation, OperationType, Param, PyGate, PyInstruction, PyOperation, StandardGate,
 };
-use crate::{Clbit, Qubit};
 
 /// These are extra mutable attributes for a circuit instruction's state. In general we don't
 /// typically deal with this in rust space and the majority of the time they're not used in Python

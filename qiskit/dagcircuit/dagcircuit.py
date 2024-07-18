@@ -67,6 +67,12 @@ import qiskit._accelerate.circuit
 DAGCircuit = qiskit._accelerate.circuit.DAGCircuit
 
 
+# TODO:
+# `_OldDAGCircuit` is a copy of the original, Python, implementation of `DAGCircuit`. It is preserved here
+# for reference and possible testing.
+# `_OldDAGCircuit` must be removed before commits with this code are merged into the main branch.
+# Note that DAGCircuitError appears many times below. This Python class is still intact and will not
+# be replaced, as such, in Rust.
 class _OldDAGCircuit:
     """
     Quantum circuit as a directed acyclic graph.
@@ -1718,7 +1724,7 @@ class _OldDAGCircuit:
 
     def separable_circuits(
         self, remove_idle_qubits: bool = False, *, vars_mode: _VarsMode = "alike"
-    ) -> list["DAGCircuit"]:
+    ) -> list["_OldDAGCircuit"]:
         """Decompose the circuit into sets of qubits with no gates connecting them.
 
         Args:
@@ -1729,7 +1735,7 @@ class _OldDAGCircuit:
                 DAGs.  See :meth:`copy_empty_like` for details on the modes.
 
         Returns:
-            List[DAGCircuit]: The circuits resulting from separating ``self`` into sets
+            List[_OldDAGCircuit]: The circuits resulting from separating ``self`` into sets
                 of disconnected qubits
 
         Each :class:`~.DAGCircuit` instance returned by this method will contain the same number of

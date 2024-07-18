@@ -19,7 +19,7 @@ use crate::operations::{Operation, OperationType, Param};
 use crate::TupleLikeArg;
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PySequence, PyString, PyTuple};
+use pyo3::types::PyTuple;
 use pyo3::{intern, IntoPy, PyObject, PyResult, ToPyObject};
 use rustworkx_core::petgraph::stable_graph::NodeIndex;
 use smallvec::smallvec;
@@ -146,33 +146,7 @@ impl DAGOpNode {
         let qargs = qargs.map_or_else(|| PyTuple::empty_bound(py), |q| q.value);
         let cargs = cargs.map_or_else(|| PyTuple::empty_bound(py), |c| c.value);
 
-        let sort_key = match dag {
-            Some(dag) => {
-                let cache = dag
-                    .getattr(intern!(py, "_key_cache"))?
-                    .downcast_into_exact::<PyDict>()?;
-                let cache_key = PyTuple::new_bound(py, [&qargs, &cargs]);
-                match cache.get_item(&cache_key)? {
-                    Some(key) => key,
-                    None => {
-                        let indices: PyResult<Vec<_>> = qargs
-                            .iter()
-                            .chain(cargs.iter())
-                            .map(|bit| {
-                                dag.call_method1(intern!(py, "find_bit"), (bit,))?
-                                    .getattr(intern!(py, "index"))
-                            })
-                            .collect();
-                        let index_strs: Vec<_> =
-                            indices?.into_iter().map(|i| format!("{:04}", i)).collect();
-                        let key = PyString::new_bound(py, index_strs.join(",").as_str());
-                        cache.set_item(&cache_key, &key)?;
-                        key.into_any()
-                    }
-                }
-            }
-            None => qargs.str()?.into_any(),
-        };
+        let sort_key = py.None();
 
         let mut instruction = CircuitInstruction::py_new(
             py, op, None, None, params, label, duration, unit, condition,
@@ -185,7 +159,7 @@ impl DAGOpNode {
             (
                 DAGOpNode {
                     instruction,
-                    sort_key: sort_key.unbind(),
+                    sort_key: sort_key,
                 },
                 DAGNode { node: None },
             ),
@@ -201,37 +175,11 @@ impl DAGOpNode {
         let qargs = instruction.qubits.clone_ref(py).into_bound(py);
         let cargs = instruction.clbits.clone_ref(py).into_bound(py);
 
-        let sort_key = match dag {
-            Some(dag) => {
-                let cache = dag
-                    .getattr(intern!(py, "_key_cache"))?
-                    .downcast_into_exact::<PyDict>()?;
-                let cache_key = PyTuple::new_bound(py, [&qargs, &cargs]);
-                match cache.get_item(&cache_key)? {
-                    Some(key) => key,
-                    None => {
-                        let indices: PyResult<Vec<_>> = qargs
-                            .iter()
-                            .chain(cargs.iter())
-                            .map(|bit| {
-                                dag.call_method1(intern!(py, "find_bit"), (bit,))?
-                                    .getattr(intern!(py, "index"))
-                            })
-                            .collect();
-                        let index_strs: Vec<_> =
-                            indices?.into_iter().map(|i| format!("{:04}", i)).collect();
-                        let key = PyString::new_bound(py, index_strs.join(",").as_str());
-                        cache.set_item(&cache_key, &key)?;
-                        key.into_any()
-                    }
-                }
-            }
-            None => qargs.str()?.into_any(),
-        };
+        let sort_key = py.None();
         let base = PyClassInitializer::from(DAGNode { node: None });
         let sub = base.add_subclass(DAGOpNode {
             instruction,
-            sort_key: sort_key.unbind(),
+            sort_key: sort_key,
         });
         Ok(Py::new(py, sub)?.to_object(py))
     }
@@ -296,7 +244,7 @@ impl DAGOpNode {
     }
 
     #[getter]
-    fn get_qargs(&self, py: Python) -> Py<PyTuple> {
+    pub fn get_qargs(&self, py: Python) -> Py<PyTuple> {
         self.instruction.qubits.clone_ref(py)
     }
 
@@ -306,7 +254,7 @@ impl DAGOpNode {
     }
 
     #[getter]
-    fn get_cargs(&self, py: Python) -> Py<PyTuple> {
+    pub fn get_cargs(&self, py: Python) -> Py<PyTuple> {
         self.instruction.clbits.clone_ref(py)
     }
 
@@ -458,7 +406,7 @@ impl DAGInNode {
         (
             DAGInNode {
                 wire,
-                sort_key: PyList::empty_bound(py).str().unwrap().into_any().unbind(),
+                sort_key: py.None(),
             },
             DAGNode { node: Some(node) },
         )
@@ -472,7 +420,7 @@ impl DAGInNode {
         Ok((
             DAGInNode {
                 wire,
-                sort_key: PyList::empty_bound(py).str()?.into_any().unbind(),
+                sort_key: py.None(),
             },
             DAGNode { node: None },
         ))
@@ -510,7 +458,7 @@ impl DAGOutNode {
         (
             DAGOutNode {
                 wire,
-                sort_key: PyList::empty_bound(py).str().unwrap().into_any().unbind(),
+                sort_key: py.None(),
             },
             DAGNode { node: Some(node) },
         )
@@ -524,7 +472,7 @@ impl DAGOutNode {
         Ok((
             DAGOutNode {
                 wire,
-                sort_key: PyList::empty_bound(py).str()?.into_any().unbind(),
+                sort_key: py.None(),
             },
             DAGNode { node: None },
         ))

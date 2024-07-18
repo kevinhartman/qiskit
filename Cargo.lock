@@ -1194,6 +1194,7 @@ dependencies = [
  "num-complex",
  "numpy",
  "pyo3",
+ "rayon",
  "rustworkx-core",
  "smallvec",
  "thiserror",
@@ -1395,8 +1396,9 @@ checksum = "80af6f9131f277a45a3fba6ce8e2258037bb0477a67e610d3c1fe046ab31de47"
 
 [[package]]
 name = "rustworkx-core"
-version = "0.16.0"
-source = "git+https://github.com/Qiskit/rustworkx.git#b18e494b7938964014706c6fbbc810151a12380f"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef8108bdaf5b590d2ea261c6ca9b1795cbf253d0733b2e209b7990c95ed23843"
 dependencies = [
  "ahash 0.8.11",
  "fixedbitset",
