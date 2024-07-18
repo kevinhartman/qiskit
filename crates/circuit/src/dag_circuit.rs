@@ -2762,6 +2762,14 @@ def _format(operand):
                             node_map.insert(*node, *qbit_out);
                             non_classical = true;
                         }
+                        NodeType::VarIn(v) => {
+                            let var_in = new_dag.var_input_map.get(v).unwrap();
+                            node_map.insert(*node, var_in);
+                        }
+                        NodeType::VarOut(v) => {
+                            let var_out = new_dag.var_output_map.get(v).unwrap();
+                            node_map.insert(*node, var_out);
+                        }
                         NodeType::Operation(pi) => {
                             let qubits = self.qargs_cache.intern(pi.qubits_id);
                             let clbits = self.cargs_cache.intern(pi.clbits_id);
