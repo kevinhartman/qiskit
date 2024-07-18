@@ -1930,7 +1930,7 @@ def _format(operand):
     ///         flow is present in a non-recursive call.
     #[pyo3(signature= (*, recurse=false))]
     fn depth(&self, py: Python, recurse: bool) -> PyResult<usize> {
-        Ok(if recurse {
+        let depth_plus_one = if recurse {
             let circuit_to_dag = CIRCUIT_TO_DAG.get_bound(py);
             let mut node_lookup: HashMap<NodeIndex, usize> = HashMap::new();
 
@@ -1978,7 +1978,9 @@ def _format(operand):
                 Some(res) => res.1,
                 None => return Err(DAGCircuitError::new_err("not a DAG")),
             }
-        } - 1)
+        };
+        let _depth = depth_plus_one.checked_sub(1);
+        Ok(_depth.unwrap_or(0))
     }
 
     /// Return the total number of qubits + clbits used by the circuit.
