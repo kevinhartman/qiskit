@@ -33,7 +33,8 @@ use pyo3::types::{
     IntoPyDict, PyDict, PyFloat, PyFrozenSet, PyInt, PyIterator, PyList, PySequence, PySet,
     PyString, PyTuple, PyType,
 };
-use pyo3::{intern, PyObject, PyResult};
+use pyo3::{intern, PyObject, PyResult, PyVisit};
+use rustworkx_core::dag_algo::layers;
 use rustworkx_core::err::ContractError;
 use rustworkx_core::graph_ext::ContractNodesDirected;
 use rustworkx_core::petgraph;
@@ -1871,7 +1872,7 @@ def _format(operand):
 
         let circuit_to_dag = CIRCUIT_TO_DAG.get_bound(py);
 
-        for node in self.op_nodes(py, Some(CONTROL_FLOW_OP.get_bound(py).downcast()?), true)? {
+        for node in self.py_op_nodes(py, Some(CONTROL_FLOW_OP.get_bound(py).downcast()?), true)? {
             let node = node.bind(py);
             let inner = if node.is_instance(self.circuit_module.for_loop_op.bind(py))? {
                 let indexset = node.getattr("params")?.get_item(0)?;
@@ -1933,7 +1934,9 @@ def _format(operand):
             let circuit_to_dag = CIRCUIT_TO_DAG.get_bound(py);
             let mut node_lookup: HashMap<NodeIndex, usize> = HashMap::new();
 
-            for node in self.op_nodes(py, Some(CONTROL_FLOW_OP.get_bound(py).downcast()?), true)? {
+            for node in
+                self.py_op_nodes(py, Some(CONTROL_FLOW_OP.get_bound(py).downcast()?), true)?
+            {
                 let node = node.bind(py);
                 let weight = if node.is_instance(self.circuit_module.for_loop_op.bind(py))? {
                     node.getattr("params")?.get_item(0)?.len()?
@@ -2188,24 +2191,8 @@ def _format(operand):
         key: Option<Bound<PyAny>>,
     ) -> PyResult<Py<PyIterator>> {
         let nodes: PyResult<Vec<_>> = if let Some(key) = key {
-            // This path (user provided key func) is not ideal, since we no longer
-            // use a string key after moving to Rust, in favor of using a tuple
-            // of the qargs and cargs interner IDs of the node.
-            let key = |node: NodeIndex| -> PyResult<String> {
-                let node = self.get_node(py, node)?;
-                Ok(key.call1((node,))?.extract()?)
-            };
-            rustworkx_core::dag_algo::lexicographical_topological_sort(&self.dag, key, false, None)
-                .map_err(|e| match e {
-                    rustworkx_core::dag_algo::TopologicalSortError::CycleOrBadInitialState => {
-                        PyValueError::new_err(format!("{}", e))
-                    }
-                    rustworkx_core::dag_algo::TopologicalSortError::KeyError(ref e) => {
-                        e.clone_ref(py)
-                    }
-                })?
-                .into_iter()
-                .map(|n| self.get_node(py, n))
+            self.topological_key_sort(py, &key)?
+                .map(|node| self.get_node(py, node))
                 .collect()
         } else {
             // Good path, using interner IDs.
@@ -2233,43 +2220,26 @@ def _format(operand):
     ///
     /// Returns:
     ///     generator(DAGOpNode): op node in topological order
-    fn topological_op_nodes(
+    #[pyo3(name = "topological_op_nodes")]
+    fn py_topological_op_nodes(
         &self,
         py: Python,
         key: Option<Bound<PyAny>>,
     ) -> PyResult<Py<PyIterator>> {
-        // return (nd for nd in self.topological_nodes(key) if isinstance(nd, DAGOpNode))
         let nodes: PyResult<Vec<_>> = if let Some(key) = key {
-            // This path (user provided key func) is not ideal, since we no longer
-            // use a string key after moving to Rust, in favor of using a tuple
-            // of the qargs and cargs interner IDs of the node.
-            let key = |node: NodeIndex| -> PyResult<String> {
-                let node = self.get_node(py, node)?;
-                Ok(key.call1((node,))?.extract()?)
-            };
-            rustworkx_core::dag_algo::lexicographical_topological_sort(&self.dag, key, false, None)
-                .map_err(|e| match e {
-                    rustworkx_core::dag_algo::TopologicalSortError::CycleOrBadInitialState => {
-                        PyValueError::new_err(format!("{}", e))
-                    }
-                    rustworkx_core::dag_algo::TopologicalSortError::KeyError(ref e) => {
-                        e.clone_ref(py)
-                    }
-                })?
-                .into_iter()
-                .filter_map(|index| match self.dag[index] {
-                    NodeType::Operation(_) => Some(self.get_node(py, index)),
+            self.topological_key_sort(py, &key)?
+                .filter_map(|node| match self.dag.node_weight(node) {
+                    Some(NodeType::Operation(_)) => Some(self.get_node(py, node)),
                     _ => None,
                 })
                 .collect()
         } else {
-            self.topological_nodes()?
-                .filter_map(|index| match self.dag[index] {
-                    NodeType::Operation(_) => Some(self.get_node(py, index)),
-                    _ => None,
-                })
+            // Good path, using interner IDs.
+            self.topological_op_nodes()?
+                .map(|n| self.get_node(py, n))
                 .collect()
         };
+
         Ok(PyTuple::new_bound(py, nodes?)
             .into_any()
             .iter()
@@ -2951,8 +2921,8 @@ def _format(operand):
     ///
     /// Returns:
     ///     list[DAGOpNode]: the list of node ids containing the given op.
-    #[pyo3(signature=(op=None, include_directives=true))]
-    fn op_nodes(
+    #[pyo3(name= "op_nodes", signature=(op=None, include_directives=true))]
+    fn py_op_nodes(
         &self,
         py: Python,
         op: Option<&Bound<PyType>>,
@@ -3290,17 +3260,14 @@ def _format(operand):
     }
 
     /// Return a list of op nodes in the first layer of this dag.
-    fn front_layers(&self) -> Py<PyList> {
-        // graph_layers = self.multigraph_layers()
-        // try:
-        //     next(graph_layers)  # Remove input nodes
-        // except StopIteration:
-        //     return []
-        //
-        // op_nodes = [node for node in next(graph_layers) if isinstance(node, DAGOpNode)]
-        //
-        // return op_nodes
-        todo!()
+    #[pyo3(name = "front_layer")]
+    fn py_front_layer(&self, py: Python) -> PyResult<Py<PyList>> {
+        let native_front_layer = self.front_layer();
+        let front_layer_list = PyList::empty_bound(py);
+        for node in native_front_layer {
+            front_layer_list.append(self.get_node(py, node)?)?;
+        }
+        Ok(front_layer_list.into())
     }
 
     /// Yield a shallow view on a layer of this DAGCircuit for all d layers of this circuit.
@@ -3319,77 +3286,121 @@ def _format(operand):
     /// TODO: Gates that use the same cbits will end up in different
     /// layers as this is currently implemented. This may not be
     /// the desired behavior.
-    fn layers(&self) -> Py<PyIterator> {
-        // graph_layers = self.multigraph_layers()
-        // try:
-        //     next(graph_layers)  # Remove input nodes
-        // except StopIteration:
-        //     return
-        //
-        // for graph_layer in graph_layers:
-        //
-        //     # Get the op nodes from the layer, removing any input and output nodes.
-        //     op_nodes = [node for node in graph_layer if isinstance(node, DAGOpNode)]
-        //
-        //     # Sort to make sure they are in the order they were added to the original DAG
-        //     # It has to be done by node_id as graph_layer is just a list of nodes
-        //     # with no implied topology
-        //     # Drawing tools rely on _node_id to infer order of node creation
-        //     # so we need this to be preserved by layers()
-        //     op_nodes.sort(key=lambda nd: nd._node_id)
-        //
-        //     # Stop yielding once there are no more op_nodes in a layer.
-        //     if not op_nodes:
-        //         return
-        //
-        //     # Construct a shallow copy of self
-        //     new_layer = self.copy_empty_like()
-        //
-        //     for node in op_nodes:
-        //         # this creates new DAGOpNodes in the new_layer
-        //         new_layer.apply_operation_back(node.op, node.qargs, node.cargs, check=False)
-        //
-        //     # The quantum registers that have an operation in this layer.
-        //     support_list = [
-        //         op_node.qargs
-        //         for op_node in new_layer.op_nodes()
-        //         if not getattr(op_node.op, "_directive", False)
-        //     ]
-        //
-        //     yield {"graph": new_layer, "partition": support_list}
-        todo!()
+    fn layers(&self, py: Python) -> PyResult<Py<PyIterator>> {
+        let layer_list = PyList::empty_bound(py);
+        let mut graph_layers = self.multigraph_layers();
+        if graph_layers.next().is_none() {
+            return Ok(PyIterator::from_bound_object(&layer_list)?.into());
+        }
+        for graph_layer in graph_layers {
+            let layer_dict = PyDict::new_bound(py);
+            // Sort to make sure they are in the order they were added to the original DAG
+            // It has to be done by node_id as graph_layer is just a list of nodes
+            // with no implied topology
+            // Drawing tools rely on _node_id to infer order of node creation
+            // so we need this to be preserved by layers()
+            // Get the op nodes from the layer, removing any input and output nodes.
+            let mut op_nodes: Vec<(&PackedInstruction, &NodeIndex)> = graph_layer
+                .iter()
+                .filter_map(|node| match self.dag.node_weight(*node) {
+                    Some(dag_node) => Some((dag_node, node)),
+                    None => None,
+                })
+                .filter_map(|(node, index)| match node {
+                    NodeType::Operation(oper) => Some((oper, index)),
+                    _ => None,
+                })
+                .collect();
+            op_nodes.sort_by_key(|(_, node_index)| **node_index);
+
+            if op_nodes.is_empty() {
+                return Ok(PyIterator::from_bound_object(&layer_list)?.into());
+            }
+
+            let mut new_layer = self.copy_empty_like(py)?;
+
+            for (node, _) in op_nodes {
+                new_layer.push_back(py, node.clone())?;
+            }
+
+            let new_layer_op_nodes = new_layer.op_nodes(false).filter_map(|node_index| {
+                match new_layer.dag.node_weight(node_index) {
+                    Some(NodeType::Operation(ref node)) => Some(node),
+                    _ => None,
+                }
+            });
+            let support_iter = new_layer_op_nodes.into_iter().map(|node| {
+                PyTuple::new_bound(
+                    py,
+                    new_layer
+                        .qubits
+                        .map_indices(new_layer.qargs_cache.intern(node.qubits_id)),
+                )
+            });
+            let support_list = PyList::empty_bound(py);
+            for support_qarg in support_iter {
+                support_list.append(support_qarg)?;
+            }
+            layer_dict.set_item("graph", new_layer.into_py(py))?;
+            layer_dict.set_item("partition", support_list)?;
+            layer_list.append(layer_dict)?;
+        }
+        Ok(layer_list.into_any().iter()?.into())
+        // todo!()
     }
 
     /// Yield a layer for all gates of this circuit.
     ///
     /// A serial layer is a circuit with one gate. The layers have the
     /// same structure as in layers().
-    fn serial_layers(&self) -> PyResult<Py<PyIterator>> {
-        // for next_node in self.topological_op_nodes():
-        //     new_layer = self.copy_empty_like()
-        //
-        //     # Save the support of the operation we add to the layer
-        //     support_list = []
-        //     # Operation data
-        //     op = copy.copy(next_node.op)
-        //     qargs = copy.copy(next_node.qargs)
-        //     cargs = copy.copy(next_node.cargs)
-        //
-        //     # Add node to new_layer
-        //     new_layer.apply_operation_back(op, qargs, cargs, check=False)
-        //     # Add operation to partition
-        //     if not getattr(next_node.op, "_directive", False):
-        //         support_list.append(list(qargs))
-        //     l_dict = {"graph": new_layer, "partition": support_list}
-        //     yield l_dict
-        todo!()
+    fn serial_layers(&self, py: Python) -> PyResult<Py<PyIterator>> {
+        let layer_list = PyList::empty_bound(py);
+        for next_node in self.topological_op_nodes()? {
+            let retrieved_node: &PackedInstruction = match self.dag.node_weight(next_node) {
+                Some(NodeType::Operation(node)) => node,
+                _ => unreachable!("A non-operation node was obtained from topological_op_nodes."),
+            };
+            let mut new_layer = self.copy_empty_like(py)?;
+
+            // Save the support of the operation we add to the layer
+            let support_list = PyList::empty_bound(py);
+            let qubits = PyTuple::new_bound(
+                py,
+                self.qargs_cache
+                    .intern(retrieved_node.qubits_id)
+                    .iter()
+                    .map(|qubit| self.qubits.get(*qubit)),
+            )
+            .unbind();
+            new_layer.push_back(py, retrieved_node.clone())?;
+
+            if !retrieved_node.op.directive() {
+                support_list.append(qubits)?;
+            }
+
+            let layer_dict = [
+                ("graph", new_layer.into_py(py)),
+                ("partition", support_list.into_any().unbind()),
+            ]
+            .into_py_dict_bound(py);
+            layer_list.append(layer_dict)?;
+        }
+
+        Ok(layer_list.into_any().iter()?.into())
     }
 
     /// Yield layers of the multigraph.
-    fn multigraph_layers(&self) -> PyResult<Py<PyIterator>> {
-        // first_layer = [x._node_id for x in self.input_map.values()]
-        // return iter(rx.layers(self._multi_graph, first_layer))
-        todo!()
+    #[pyo3(name = "multigraph_layers")]
+    fn py_multigraph_layers(&self, py: Python) -> PyResult<Py<PyIterator>> {
+        let graph_layers = self.multigraph_layers().map(|layer| -> Vec<PyObject> {
+            layer
+                .into_iter()
+                .filter_map(|index| self.get_node(py, index).ok())
+                .collect()
+        });
+        let list: Bound<PyList> =
+            PyList::new_bound(py, graph_layers.collect::<Vec<Vec<PyObject>>>());
+        Ok(PyIterator::from_bound_object(&list)?.unbind())
     }
 
     /// Return a set of non-conditional runs of "op" nodes with the given names.
@@ -3555,7 +3566,7 @@ def _format(operand):
                 }
                 let circuit_to_dag = CIRCUIT_TO_DAG.get_bound(py);
                 for node in
-                    dag.op_nodes(py, Some(CONTROL_FLOW_OP.get_bound(py).downcast()?), true)?
+                    dag.py_op_nodes(py, Some(CONTROL_FLOW_OP.get_bound(py).downcast()?), true)?
                 {
                     let raw_blocks = node.getattr(py, "op")?.getattr(py, "blocks")?;
                     let blocks: &Bound<PyList> = raw_blocks.downcast_bound::<PyList>(py)?;
@@ -4114,6 +4125,38 @@ impl DAGCircuit {
         Ok(nodes.into_iter())
     }
 
+    fn topological_op_nodes(&self) -> PyResult<impl Iterator<Item = NodeIndex> + '_> {
+        Ok(self.topological_nodes()?.filter(|node: &NodeIndex| {
+            matches!(self.dag.node_weight(*node), Some(NodeType::Operation(_)))
+        }))
+    }
+
+    fn topological_key_sort(
+        &self,
+        py: Python,
+        key: &Bound<PyAny>,
+    ) -> PyResult<impl Iterator<Item = NodeIndex>> {
+        // This path (user provided key func) is not ideal, since we no longer
+        // use a string key after moving to Rust, in favor of using a tuple
+        // of the qargs and cargs interner IDs of the node.
+        let key = |node: NodeIndex| -> PyResult<String> {
+            let node = self.get_node(py, node)?;
+            Ok(key.call1((node,))?.extract()?)
+        };
+        Ok(
+            rustworkx_core::dag_algo::lexicographical_topological_sort(&self.dag, key, false, None)
+                .map_err(|e| match e {
+                    rustworkx_core::dag_algo::TopologicalSortError::CycleOrBadInitialState => {
+                        PyValueError::new_err(format!("{}", e))
+                    }
+                    rustworkx_core::dag_algo::TopologicalSortError::KeyError(ref e) => {
+                        e.clone_ref(py)
+                    }
+                })?
+                .into_iter(),
+        )
+    }
+
     fn is_wire_idle(&self, wire: &Wire) -> PyResult<bool> {
         let (input_node, output_node) = match wire {
             Wire::Qubit(qubit) => (self.qubit_input_map[qubit], self.qubit_output_map[qubit]),
@@ -4504,6 +4547,59 @@ impl DAGCircuit {
             }
         };
         Ok(dag_node)
+    }
+
+    /// Returns an iterator over all the indices that refer to an `Operation` node in the `DAGCircuit.`
+    pub fn op_nodes<'a>(
+        &'a self,
+        include_directives: bool,
+    ) -> Box<dyn Iterator<Item = NodeIndex> + 'a> {
+        let node_ops_iter = self
+            .dag
+            .node_references()
+            .filter_map(|(node_index, node_type)| match node_type {
+                NodeType::Operation(ref node) => Some((node_index, node)),
+                _ => None,
+            });
+        if !include_directives {
+            Box::new(node_ops_iter.filter_map(|(index, node)| {
+                if !node.op.directive() {
+                    Some(index)
+                } else {
+                    None
+                }
+            }))
+        } else {
+            Box::new(node_ops_iter.map(|(index, _)| index))
+        }
+    }
+
+    /// Returns an iterator over a list layers of the `DAGCircuit``.
+    pub fn multigraph_layers<'a>(&'a self) -> impl Iterator<Item = Vec<NodeIndex>> + 'a {
+        let first_layer = self.qubit_input_map.values().copied().collect();
+        // A DAG is by definition acyclical, therefore unwrapping the layer should never fail.
+        layers(&self.dag, first_layer).map(|layer| match layer {
+            Ok(layer) => layer,
+            Err(_) => unreachable!("Not a DAG."),
+        })
+    }
+
+    /// Returns an iterator over the first layer of the `DAGCircuit``.
+    pub fn front_layer<'a>(&'a self) -> Box<dyn Iterator<Item = NodeIndex> + 'a> {
+        let mut graph_layers = self.multigraph_layers();
+        graph_layers.next();
+
+        let next_layer = graph_layers.next();
+        match next_layer {
+            Some(layer) => Box::new(layer.into_iter().filter_map(|node| {
+                if matches!(self.dag.node_weight(node).unwrap(), NodeType::Operation(_)) {
+                    Some(node)
+                } else {
+                    None
+                }
+            })),
+            None => Box::new(vec![].into_iter()),
+        }
     }
 
     fn substitute_node_with_subgraph(
