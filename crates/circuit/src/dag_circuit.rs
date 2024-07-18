@@ -34,6 +34,7 @@ use pyo3::types::{
     PyString, PyTuple, PyType,
 };
 use pyo3::{intern, PyObject, PyResult, PyVisit};
+use rustworkx_core::connectivity::connected_components as core_connected_components;
 use rustworkx_core::dag_algo::layers;
 use rustworkx_core::err::ContractError;
 use rustworkx_core::graph_ext::ContractNodesDirected;
@@ -799,7 +800,7 @@ def _format(operand):
                 register_name
             )));
         }
-        self.qregs.bind(py).set_item(register_name, qreg)?;
+        self.qregs.bind(py).set_item(&register_name, qreg)?;
 
         for (index, bit) in qreg.iter()?.enumerate() {
             let bit = bit?;
@@ -1033,20 +1034,21 @@ def _format(operand):
     ///         or is not idle.
     #[pyo3(signature = (*qubits))]
     fn remove_qubits(&mut self, py: Python, qubits: &Bound<PyTuple>) -> PyResult<()> {
-        let mut non_bits = Vec::new();
+        let mut non_qbits = Vec::new();
         for bit in qubits.iter() {
-            if !bit.is_instance(self.circuit_module.clbit.bind(py))? {
-                non_bits.push(bit);
+            if !bit.is_instance(self.circuit_module.qubit.bind(py))? {
+                non_qbits.push(bit);
             }
         }
-        if !non_bits.is_empty() {
+        if !non_qbits.is_empty() {
             return Err(DAGCircuitError::new_err(format!(
                 "qubits not of type Qubit: {:?}",
-                non_bits
+                non_qbits
             )));
         }
 
         let qubits: IndexSet<Qubit> = self.qubits.map_bits(qubits)?.collect();
+
         let mut busy_bits = Vec::new();
         for bit in qubits.iter() {
             if !self.is_wire_idle(&Wire::Qubit(*bit))? {
@@ -2771,43 +2773,121 @@ def _format(operand):
     /// clbits as ``self``. The global phase information in ``self`` will not be maintained
     /// in the subcircuits returned by this method.
     #[pyo3(signature = (remove_idle_qubits=false))]
-    fn separable_circuits(&self, remove_idle_qubits: bool) -> Py<PyList> {
-        // connected_components = rx.weakly_connected_components(self._multi_graph)
-        //
-        // # Collect each disconnected subgraph
-        // disconnected_subgraphs = []
-        // for components in connected_components:
-        //     disconnected_subgraphs.append(self._multi_graph.subgraph(list(components)))
-        //
-        // # Helper function for ensuring rustworkx nodes are returned in lexicographical,
-        // # topological order
-        // def _key(x):
-        //     return x.sort_key
-        //
-        // # Create new DAGCircuit objects from each of the rustworkx subgraph objects
-        // decomposed_dags = []
-        // for subgraph in disconnected_subgraphs:
-        //     new_dag = self.copy_empty_like()
-        //     new_dag.global_phase = 0
-        //     subgraph_is_classical = True
-        //     for node in rx.lexicographical_topological_sort(subgraph, key=_key):
-        //         if isinstance(node, DAGInNode):
-        //             if isinstance(node.wire, Qubit):
-        //                 subgraph_is_classical = False
-        //         if not isinstance(node, DAGOpNode):
-        //             continue
-        //         new_dag.apply_operation_back(node.op, node.qargs, node.cargs, check=False)
-        //
-        //     # Ignore DAGs created for empty clbits
-        //     if not subgraph_is_classical:
-        //         decomposed_dags.append(new_dag)
-        //
-        // if remove_idle_qubits:
-        //     for dag in decomposed_dags:
-        //         dag.remove_qubits(*(bit for bit in dag.idle_wires() if isinstance(bit, Qubit)))
-        //
-        // return decomposed_dags
-        todo!()
+    fn separable_circuits(&self, py: Python, remove_idle_qubits: bool) -> PyResult<Py<PyList>> {
+        let connected_components = core_connected_components(&self.dag);
+        let dags = PyList::empty_bound(py);
+
+        for comp_nodes in connected_components.iter() {
+            let mut new_dag = self.copy_empty_like(py)?;
+            new_dag.set_global_phase(py, &PyFloat::new_bound(py, 0 as c_double))?;
+
+            // A map from nodes in the this DAGCircuit to nodes in the new dag. Used for adding edges
+            let mut node_map: HashMap<NodeIndex, NodeIndex> =
+                HashMap::with_capacity(comp_nodes.len());
+
+            // Adding the nodes to the new dag
+            let mut non_classical = false;
+            for node in comp_nodes {
+                match self.dag.node_weight(*node) {
+                    Some(w) => match w {
+                        NodeType::ClbitIn(b) => {
+                            let clbit_in = new_dag.clbit_input_map.get(b).unwrap();
+                            node_map.insert(*node, *clbit_in);
+                        }
+                        NodeType::ClbitOut(b) => {
+                            let clbit_out = new_dag.clbit_output_map.get(b).unwrap();
+                            node_map.insert(*node, *clbit_out);
+                        }
+                        NodeType::QubitIn(q) => {
+                            let qbit_in = new_dag.qubit_input_map.get(q).unwrap();
+                            node_map.insert(*node, *qbit_in);
+                            non_classical = true;
+                        }
+                        NodeType::QubitOut(q) => {
+                            let qbit_out = new_dag.qubit_output_map.get(q).unwrap();
+                            node_map.insert(*node, *qbit_out);
+                            non_classical = true;
+                        }
+                        NodeType::Operation(pi) => {
+                            let qubits = self.qargs_cache.intern(pi.qubits_id);
+                            let clbits = self.cargs_cache.intern(pi.clbits_id);
+                            let qubits_id =
+                                Interner::intern(&mut new_dag.qargs_cache, qubits.clone())?;
+                            let clbits_id =
+                                Interner::intern(&mut new_dag.cargs_cache, clbits.clone())?;
+
+                            let extr_attr = pi.extra_attrs.clone().unwrap();
+                            let new_pi = NodeType::Operation(PackedInstruction::new(
+                                pi.op.clone(),
+                                qubits_id,
+                                clbits_id,
+                                pi.params.clone(),
+                                extr_attr.label,
+                                extr_attr.duration,
+                                extr_attr.unit,
+                                extr_attr.condition,
+                                #[cfg(feature = "cache_pygates")]
+                                pi.py_op.borrow().clone(),
+                            ));
+                            let new_node = new_dag.dag.add_node(new_pi);
+                            node_map.insert(*node, new_node);
+                            non_classical = true;
+                        }
+                    },
+                    None => panic!("DAG node without payload!"),
+                }
+            }
+            if !non_classical {
+                continue;
+            }
+
+            // Handling the edges in the new dag
+            for node in comp_nodes {
+                // Since the nodes comprise an SCC, it's enough to just look at the (e.g.) outgoing edges
+                let outgoing_edges = self.dag.edges_directed(*node, Direction::Outgoing);
+
+                // Remove the edges added by copy_empty_like (as idle wires) to avoid duplication
+                if let Some(NodeType::QubitIn(_)) | Some(NodeType::ClbitIn(_)) =
+                    self.dag.node_weight(*node)
+                {
+                    let edges: Vec<EdgeIndex> = new_dag.dag.edges(*node).map(|e| e.id()).collect();
+                    for edge in edges {
+                        new_dag.dag.remove_edge(edge);
+                    }
+                }
+
+                for e in outgoing_edges {
+                    let (source, target) = (e.source(), e.target());
+                    let edge_weight = e.weight();
+                    let (source_new, target_new) = (
+                        node_map.get(&source).unwrap(),
+                        node_map.get(&target).unwrap(),
+                    );
+                    new_dag
+                        .dag
+                        .add_edge(*source_new, *target_new, edge_weight.clone());
+                }
+            }
+
+            if remove_idle_qubits {
+                let idle_wires: Vec<Bound<PyAny>> = new_dag
+                    .idle_wires(py, None)?
+                    .into_bound(py)
+                    .map(|q| q.unwrap())
+                    .filter(|e| {
+                        e.is_instance(new_dag.circuit_module.qubit.bind(py))
+                            .unwrap()
+                    })
+                    .collect();
+
+                let qubits = PyTuple::new_bound(py, idle_wires);
+                new_dag.remove_qubits(py, &qubits)?; // TODO: this does not really work, some issue with remove_qubits itself
+            }
+
+            dags.append(pyo3::Py::new(py, new_dag)?)?;
+        }
+
+        Ok(dags.unbind())
     }
 
     /// Swap connected nodes e.g. due to commutation.
