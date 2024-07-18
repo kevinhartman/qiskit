@@ -2819,25 +2819,76 @@ def _format(operand):
     /// Raises:
     ///     DAGCircuitError: if either node is not an OpNode or nodes are not connected
     fn swap_nodes(&mut self, node1: &DAGNode, node2: &DAGNode) -> PyResult<()> {
-        // if not (isinstance(node1, DAGOpNode) and isinstance(node2, DAGOpNode)):
-        //     raise DAGCircuitError("nodes to swap are not both DAGOpNodes")
-        // try:
-        //     connected_edges = self._multi_graph.get_all_edge_data(node1._node_id, node2._node_id)
-        // except rx.NoEdgeBetweenNodes as no_common_edge:
-        //     raise DAGCircuitError("attempt to swap unconnected nodes") from no_common_edge
-        // node1_id = node1._node_id
-        // node2_id = node2._node_id
-        // for edge in connected_edges[::-1]:
-        //     edge_find = lambda x, y=edge: x == y
-        //     edge_parent = self._multi_graph.find_predecessors_by_edge(node1_id, edge_find)[0]
-        //     self._multi_graph.remove_edge(edge_parent._node_id, node1_id)
-        //     self._multi_graph.add_edge(edge_parent._node_id, node2_id, edge)
-        //     edge_child = self._multi_graph.find_successors_by_edge(node2_id, edge_find)[0]
-        //     self._multi_graph.remove_edge(node1_id, node2_id)
-        //     self._multi_graph.add_edge(node2_id, node1_id, edge)
-        //     self._multi_graph.remove_edge(node2_id, edge_child._node_id)
-        //     self._multi_graph.add_edge(node1_id, edge_child._node_id, edge)
-        todo!()
+        let node1 = node1.node.unwrap();
+        let node2 = node2.node.unwrap();
+
+        // Check that both nodes correspond to operations
+        if !matches!(self.dag.node_weight(node1).unwrap(), NodeType::Operation(_))
+            || !matches!(self.dag.node_weight(node2).unwrap(), NodeType::Operation(_))
+        {
+            return Err(DAGCircuitError::new_err(
+                "Nodes to swap are not both DAGOpNodes",
+            ));
+        }
+
+        // Gather all wires connecting node1 and node2.
+        // This functionality was extracted from rustworkx's 'get_edge_data'
+        let wires: Vec<Wire> = self
+            .dag
+            .edges(node1)
+            .filter(|edge| edge.target() == node2)
+            .map(|edge| edge.weight().clone())
+            .collect();
+
+        if wires.is_empty() {
+            return Err(DAGCircuitError::new_err(
+                "Attempt to swap unconnected nodes",
+            ));
+        };
+
+        // Closure that finds the first parent/child node connected to a reference node by given wire
+        // and returns relevant edge information depending on the specified direction:
+        //  - Incoming -> parent -> outputs (parent_edge_id, parent_source_node_id)
+        //  - Outgoing -> child -> outputs (child_edge_id, child_target_node_id)
+        // This functionality was inspired in rustworkx's 'find_predecessors_by_edge' and 'find_successors_by_edge'.
+        let directed_edge_for_wire = |node: NodeIndex, direction: Direction, wire: &Wire| {
+            for edge in self.dag.edges_directed(node, direction) {
+                if wire == edge.weight() {
+                    match direction {
+                        Incoming => return Some((edge.id(), edge.source())),
+                        Outgoing => return Some((edge.id(), edge.target())),
+                    }
+                }
+            }
+            None
+        };
+
+        // Vector that contains a tuple of (wire, edge_info, parent_info, child_info) per wire in wires
+        let relevant_edges = wires
+            .iter()
+            .rev()
+            .map(|wire| {
+                (
+                    wire,
+                    directed_edge_for_wire(node1, Outgoing, wire).unwrap(),
+                    directed_edge_for_wire(node1, Incoming, wire).unwrap(),
+                    directed_edge_for_wire(node2, Outgoing, wire).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // Iterate over relevant edges and modify self.dag
+        for (wire, (node1_to_node2, _), (parent_to_node1, parent), (node2_to_child, child)) in
+            relevant_edges
+        {
+            self.dag.remove_edge(parent_to_node1);
+            self.dag.add_edge(parent, node2, wire.clone());
+            self.dag.remove_edge(node1_to_node2);
+            self.dag.add_edge(node2, node1, wire.clone());
+            self.dag.remove_edge(node2_to_child);
+            self.dag.add_edge(node1, child, wire.clone());
+        }
+        Ok(())
     }
 
     /// Get the node in the dag.
