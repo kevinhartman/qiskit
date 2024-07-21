@@ -2477,7 +2477,7 @@ def _format(operand):
         }
 
         let mut wire_map: HashMap<Wire, Wire> =
-            if wires.is_some() && wires.unwrap().is_instance_of::<PyDict>() {
+            if wires.is_some() && wires.as_ref().unwrap().is_instance_of::<PyDict>() {
                 let wires = wires.unwrap().downcast_into::<PyDict>()?;
                 wires
                     .iter()
@@ -2558,7 +2558,8 @@ def _format(operand):
                         }
                     }
                 }
-                if wires.len() != node_wire_order.len() {
+                let node_wire_order_len = node_wire_order.len();
+                if wires.len() != node_wire_order_len {
                     return Err(DAGCircuitError::new_err(format!(
                         "bit mapping invalid: expected {}, got {}",
                         node_wire_order.len(),
@@ -2566,7 +2567,7 @@ def _format(operand):
                     )));
                 }
                 let wire_map = HashMap::from_iter(wires.into_iter().zip(node_wire_order));
-                if wire_map.len() != node_wire_order.len() {
+                if wire_map.len() != node_wire_order_len {
                     return Err(DAGCircuitError::new_err(
                         "bit mapping invalid: some bits have duplicate entries",
                     ));
@@ -2593,7 +2594,7 @@ def _format(operand):
             let dag_vars: Vec<PyObject> = input_dag.iter_vars(py)?.bind(py).extract()?;
             PySet::new_bound(py, &dag_vars)?
         };
-        if dag_vars.sub(node_vars)?.is_truthy()? {
+        if dag_vars.sub(&node_vars)?.is_truthy()? {
             return Err(DAGCircuitError::new_err(format!(
                 "Cannot replace a node with a DAG with more variables. Variables in node: {}. Variables in DAG: {}.",
                 node_vars,
@@ -2637,8 +2638,8 @@ def _format(operand):
                             // Target was not in node's wires, so we need a dummy.
                             let dummy = CLBIT.get_bound(py).call0()?;
                             let new_target = in_dag.add_clbit_unchecked(py, &dummy)?;
-                            wire_map[&Wire::Clbit(new_target)] = Wire::Clbit(target);
-                            reverse_wire_map[&Wire::Clbit(target)] = Wire::Clbit(new_target);
+                            wire_map.insert(Wire::Clbit(new_target), Wire::Clbit(target));
+                            reverse_wire_map.insert(Wire::Clbit(target), Wire::Clbit(new_target));
                             Ok(new_target)
                         })?;
                     (
@@ -2672,8 +2673,8 @@ def _format(operand):
                             // Target bit was not in node's wires, so we need a dummy.
                             let dummy = CLBIT.get_bound(py).call0()?;
                             let theirs = in_dag.add_clbit_unchecked(py, &dummy)?;
-                            wire_map[&Wire::Clbit(theirs)] = Wire::Clbit(ours);
-                            reverse_wire_map[&Wire::Clbit(ours)] = Wire::Clbit(theirs);
+                            wire_map.insert(Wire::Clbit(theirs), Wire::Clbit(ours));
+                            reverse_wire_map.insert(Wire::Clbit(ours), Wire::Clbit(theirs));
                             new_target.push(dummy.unbind());
                             target_cargs.insert(theirs);
                         }
@@ -2711,7 +2712,7 @@ def _format(operand):
                                     py_new_condition.downcast::<PyTuple>()?,
                                 )?;
                             } else {
-                                py_op.setattr(intern!(py, "condition"), py_new_condition)?;
+                                py_op.setattr(intern!(py, "condition"), &py_new_condition)?;
                             }
                         }
 
@@ -2728,7 +2729,7 @@ def _format(operand):
                                 op.unit,
                                 op.condition,
                                 #[cfg(feature = "cache_pygates")]
-                                Some(py_op),
+                                Some(py_op.unbind()),
                             ),
                         )?;
                     } else {
