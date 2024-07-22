@@ -2454,7 +2454,8 @@ def _format(operand):
         wires: Option<Bound<PyAny>>,
         propagate_condition: bool,
     ) -> PyResult<Py<PyDict>> {
-        let instr = match &self.dag[node.node.unwrap()] {
+        let node = node.node.unwrap();
+        let instr = match &self.dag[node] {
             NodeType::Operation(p) => p,
             _ => {
                 return Err(DAGCircuitError::new_err("expected DAGOpNode"));
@@ -2601,8 +2602,8 @@ def _format(operand):
                 dag_vars
             )));
         }
-        for var in dag_vars {
-            wire_map.insert(Wire::Var(var.clone().unbind()), Wire::Var(var.unbind()));
+        for var in &dag_vars {
+            wire_map.insert(Wire::Var(var.clone().unbind()), Wire::Var(var.clone().unbind()));
         }
 
         // node wires => input_dag wires
@@ -2740,39 +2741,75 @@ def _format(operand):
             } else {
                 input_dag
             };
-        //
-        // if in_dag.global_phase:
-        //     self.global_phase += in_dag.global_phase
-        //
-        // # Add wire from pred to succ if no ops on mapped wire on ``in_dag``
-        // # rustworkx's substitute_node_with_subgraph lacks the DAGCircuit
-        // # context to know what to do in this case (the method won't even see
-        // # these nodes because they're filtered) so we manually retain the
-        // # edges prior to calling substitute_node_with_subgraph and set the
-        // # edge_map_fn callback kwarg to skip these edges when they're
-        // # encountered.
-        // for in_dag_wire, self_wire in wire_map.items():
-        //     input_node = in_dag.input_map[in_dag_wire]
-        //     output_node = in_dag.output_map[in_dag_wire]
-        //     if in_dag._multi_graph.has_edge(input_node._node_id, output_node._node_id):
-        //         pred = self._multi_graph.find_predecessors_by_edge(
-        //             node._node_id, lambda edge, wire=self_wire: edge == wire
-        //         )[0]
-        //         succ = self._multi_graph.find_successors_by_edge(
-        //             node._node_id, lambda edge, wire=self_wire: edge == wire
-        //         )[0]
-        //         self._multi_graph.add_edge(pred._node_id, succ._node_id, self_wire)
-        // for contracted_var in node_vars - dag_vars:
-        //     pred = self._multi_graph.find_predecessors_by_edge(
-        //         node._node_id, lambda edge, wire=contracted_var: edge == wire
-        //     )[0]
-        //     succ = self._multi_graph.find_successors_by_edge(
-        //         node._node_id, lambda edge, wire=contracted_var: edge == wire
-        //     )[0]
-        //     self._multi_graph.add_edge(pred._node_id, succ._node_id, contracted_var)
-        //
-        // # Exclude any nodes from in_dag that are not a DAGOpNode or are on
-        // # wires outside the set specified by the wires kwarg
+
+        if in_dag.global_phase.bind(py).is_truthy()? {
+            self.global_phase = self
+                .global_phase
+                .bind(py)
+                .add(in_dag.global_phase.bind(py))?
+                .unbind();
+        }
+
+        // Add wire from pred to succ if no ops on mapped wire on ``in_dag``
+        // rustworkx's substitute_node_with_subgraph lacks the DAGCircuit
+        // context to know what to do in this case (the method won't even see
+        // these nodes because they're filtered) so we manually retain the
+        // edges prior to calling substitute_node_with_subgraph and set the
+        // edge_map_fn callback kwarg to skip these edges when they're
+        // encountered.
+        for (in_dag_wire, self_wire) in &wire_map {
+            let (input_node, output_node) = match in_dag_wire {
+                Wire::Qubit(q) => (in_dag.qubit_input_map[q], in_dag.qubit_output_map[q]),
+                Wire::Clbit(c) => (in_dag.clbit_input_map[c], in_dag.clbit_output_map[c]),
+                Wire::Var(v) => (
+                    in_dag.var_input_map.get(v).unwrap(),
+                    in_dag.var_output_map.get(v).unwrap(),
+                ),
+            };
+
+            if in_dag.dag.find_edge(input_node, output_node).is_some() {
+                let pred = self
+                    .dag
+                    .edges_directed(node, Incoming)
+                    .find(|e| e.weight() == self_wire)
+                    .unwrap()
+                    .source();
+                let succ = self
+                    .dag
+                    .edges_directed(node, Outgoing)
+                    .find(|e| e.weight() == self_wire)
+                    .unwrap()
+                    .target();
+                self.dag.add_edge(pred, succ, self_wire.clone());
+            }
+        }
+
+        for contracted_var in node_vars.sub(&dag_vars)?.iter()? {
+            let contracted_var = contracted_var?;
+            let pred = self
+                .dag
+                .edges_directed(node, Incoming)
+                .find(|e| match e.weight() {
+                    Wire::Var(ref v) => contracted_var.eq(v).unwrap(),
+                    _ => false,
+                })
+                .unwrap()
+                .source();
+            let succ = self
+                .dag
+                .edges_directed(node, Outgoing)
+                .find(|e| match e.weight() {
+                    Wire::Var(ref v) => contracted_var.eq(v).unwrap(),
+                    _ => false,
+                })
+                .unwrap()
+                .target();
+            self.dag
+                .add_edge(pred, succ, Wire::Var(contracted_var.unbind()));
+        }
+
+        // Exclude any nodes from in_dag that are not a DAGOpNode or are on
+        // wires outside the set specified by the wires kwarg
         // def filter_fn(node):
         //     if not isinstance(node, DAGOpNode):
         //         return False
