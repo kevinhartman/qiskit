@@ -10,35 +10,32 @@
 // copyright notice, and modified files need to carry a notice indicating
 // that they have been altered from the originals.
 
-use conan::*;
-use std::{env, path::Path, path::PathBuf};
+use conan2::{ConanInstall, ConanVerbosity};
+use std::{env, path::PathBuf};
 
 fn main() {
-    let command = InstallCommandBuilder::new()
-        .build_policy(BuildPolicy::Missing)
-        .with_options(&["symengine:integer_class=boostmp", "symengine:shared=False"])
-        .recipe_path(Path::new("conanfile.txt"))
-        .build();
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let conan_profile = format!("{}-{}", target_os, target_arch);
+    
+    let build_info = ConanInstall::new()
+        .profile(&conan_profile)
+        .detect_profile()
+        .build("missing")
+        .verbosity(ConanVerbosity::Error)
+        .run()
+        .parse();
 
-    let build_info = command.generate().expect("Failed to run conan install");
-    println!("using conan build info");
-    build_info.cargo_emit();
-
-    // for test
-    println!("cargo:rustc-link-lib=static=symengine");
-    println!("cargo:rustc-link-lib=dylib=teuchos");
-    println!("cargo:rustc-link-lib=dylib=m");
-    println!("cargo:rustc-link-lib=dylib=c");
-    println!("cargo:rustc-link-lib=dylib=stdc++");
-
-    let mut include_paths = Vec::<&str>::new();
-    for dependency in build_info.dependencies() {
-        for include_path in dependency.get_include_dirs() {
-            if include_path.contains("symengine") {
-                include_paths.push(include_path);
-            }
+    let mut include_paths = Vec::<String>::new();
+    for path in build_info.include_paths() {
+        let spath = path.into_os_string().into_string().unwrap();
+        println!("{}", spath);
+        if spath.contains("symen") {
+            include_paths.push(spath);
         }
     }
+    
+    build_info.emit();
 
     let bindings = bindgen::Builder::default()
         .clang_arg(format!("-I{}/", include_paths[0]))
