@@ -10,35 +10,25 @@
 // copyright notice, and modified files need to carry a notice indicating
 // that they have been altered from the originals.
 
-use conan2::{ConanInstall, ConanVerbosity};
 use std::{env, path::PathBuf};
+use vcpkg;
 
 fn main() {
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap();
-    let conan_profile = format!("{}-{}", target_os, target_arch);
-    
-    let build_info = ConanInstall::new()
-        .profile(&conan_profile)
-        .detect_profile()
-        .build("missing")
-        .verbosity(ConanVerbosity::Error)
-        .run()
-        .parse();
+    let build_info = vcpkg::Config::new()
+        .emit_includes(true)
+        .find_package("symengine").unwrap();
 
-    let mut include_paths = Vec::<String>::new();
-    for path in build_info.include_paths() {
-        let spath = path.into_os_string().into_string().unwrap();
-        println!("{}", spath);
-        if spath.contains("symen") {
-            include_paths.push(spath);
-        }
-    }
-    
-    build_info.emit();
+    let include_path = match build_info.include_paths.as_slice() {
+        [path] => {
+            path.as_os_str().to_str().unwrap()
+        },
+        _ => panic!("Include path not found!")
+    };
+
+    println!("INC PATH: {}", &include_path);
 
     let bindings = bindgen::Builder::default()
-        .clang_arg(format!("-I{}/", include_paths[0]))
+        .clang_arg(format!("-I{}/", include_path))
         .header("wrapper.h")
         .generate()
         .expect("Unable to generate bindings");
