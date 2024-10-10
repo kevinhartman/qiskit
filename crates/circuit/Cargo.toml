@@ -27,8 +27,8 @@ bindgen = "0.65.1"
 vcpkg = "0.2.15"
 
 [package.metadata.vcpkg]
-git = "https://github.com/microsoft/vcpkg"
-rev = "ab9139089834681d7a95744fe4685dfaadb70fa0"
+git = "https://github.com/kevinhartman/vcpkg"
+rev = "qiskit" # TODO: anchor this
 dependencies = ["symengine"]
 
 [dependencies.pyo3]
