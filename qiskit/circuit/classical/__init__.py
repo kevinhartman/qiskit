@@ -18,7 +18,7 @@ Classical expressions (:mod:`qiskit.circuit.classical`)
 This module contains an exploratory representation of real-time operations on classical values
 during circuit execution.
 
-Currently, only simple expressions on bits and registers that result in a Boolean value are
+Currently, simple expressions on bits and registers that result in a Boolean value are
 supported, and these are only valid for use in the conditions of :meth:`.QuantumCircuit.if_test`
 (:class:`.IfElseOp`) and :meth:`.QuantumCircuit.while_loop` (:class:`.WhileLoopOp`), and in the
 target of :meth:`.QuantumCircuit.switch` (:class:`.SwitchCaseOp`).
