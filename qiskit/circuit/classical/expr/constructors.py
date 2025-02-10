@@ -634,7 +634,10 @@ def index(target: typing.Any, index: typing.Any, /) -> Expr:
 
 def _binary_sum(op: Binary.Op, left: typing.Any, right: typing.Any) -> Expr:
     left, right = _lift_binary_operands(left, right)
-    if left.type.kind is not right.type.kind and types.order(left.type, right.type) is types.Ordering.NONE:
+    if (
+        left.type.kind is not right.type.kind
+        and types.order(left.type, right.type) is types.Ordering.NONE
+    ):
         raise TypeError(f"invalid types for '{op}': '{left.type}' and '{right.type}'")
     type = types.greater(left.type, right.type)
     return Binary(

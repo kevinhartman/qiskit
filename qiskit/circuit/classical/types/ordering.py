@@ -78,9 +78,8 @@ def _order_uint_uint(left: Uint, right: Uint, /) -> Ordering:
 _ORDERERS = {
     (Bool, Bool): _order_equal,
     (Uint, Uint): _order_uint_uint,
-    (Uint, Float): _order_less,
     (Float, Float): _order_equal,
-    (Float, Uint): _order_greater,
+    (Bool, Float): _order_less,
     (Duration, Duration): _order_equal,
     (Duration, Stretch): _order_less,
     (Stretch, Stretch): _order_equal,
@@ -242,11 +241,8 @@ _ALLOWED_CASTS = {
     (Bool, Float): lambda _a, _b, /: CastKind.LOSSLESS,
     (Uint, Bool): lambda _a, _b, /: CastKind.IMPLICIT,
     (Uint, Uint): _uint_cast,
-    # TODO: is this the best choice here?
-    #  I suppose it has to at least be LOSSLESS if we consider Float greater than Uint in OpenQASM
-    (Uint, Float): lambda _a, _b, /: CastKind.IMPLICIT,
+    (Uint, Float): lambda _a, _b, /: CastKind.DANGEROUS,
     (Float, Float): lambda _a, _b, /: CastKind.EQUAL,
-    (Float, Bool): lambda _a, _b, /: CastKind.IMPLICIT,
     (Float, Uint): lambda _a, _b, /: CastKind.DANGEROUS,
     (Duration, Stretch): lambda _a, _b, /: CastKind.IMPLICIT,
 }
