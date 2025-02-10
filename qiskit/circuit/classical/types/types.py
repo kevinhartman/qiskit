@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-__all__ = ["Type", "Bool", "Uint"]
+__all__ = ["Type", "Bool", "Uint", "Float", "Duration", "Stretch"]
 
 import typing
 
@@ -105,3 +105,69 @@ class Uint(Type):
 
     def __eq__(self, other):
         return isinstance(other, Uint) and self.const == other.const and self.width == other.width
+
+
+@typing.final
+class Float(Type):
+    """A machine-precision floating point number.
+
+    In the future, this may also be used to represent a fixed-width float.
+    """
+
+    __slots__ = (
+        "const",
+    )
+
+    def __init__(self, *, const: bool = False):
+        super(Type, self).__setattr__("const", const)
+
+    def __repr__(self):
+        return f"Float(const={self.const})"
+
+    def __hash__(self):
+        return hash((self.__class__, self.const))
+
+    def __eq__(self, other):
+        return isinstance(other, Float) and self.const == other.const
+
+
+@typing.final
+class Duration(Type):
+    """A length of time, possibly negative."""
+
+    __slots__ = ()
+
+    @property
+    def const(self):
+        # A duration is always const.
+        return True
+
+    def __repr__(self):
+        return f"Duration()"
+
+    def __hash__(self):
+        return hash(self.__class__)
+
+    def __eq__(self, other):
+        return isinstance(other, Duration)
+
+
+@typing.final
+class Stretch(Type):
+    """A special type that denotes some not-yet-known non-negative duration."""
+
+    __slots__ = ()
+
+    @property
+    def const(self):
+        # A stretch is always const.
+        return True
+
+    def __repr__(self):
+        return f"Stretch()"
+
+    def __hash__(self):
+        return hash(self.__class__)
+
+    def __eq__(self, other):
+        return isinstance(other, Stretch)

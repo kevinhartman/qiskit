@@ -105,5 +105,5 @@ __all__ = [
     "cast_kind",
 ]
 
-from .types import Type, Bool, Uint
+from .types import Type, Bool, Uint, Float, Duration, Stretch
 from .ordering import Ordering, order, is_subtype, is_supertype, greater, CastKind, cast_kind

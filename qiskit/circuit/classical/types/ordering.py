@@ -26,7 +26,7 @@ __all__ = [
 
 import enum
 
-from .types import Type, Bool, Uint
+from .types import Type, Bool, Uint, Float, Duration, Stretch
 
 
 # While the type system is simple, it's overkill to represent the complete partial ordering graph of
@@ -55,8 +55,16 @@ class Ordering(enum.Enum):
         return str(self)
 
 
-def _order_bool_bool(_a: Bool, _b: Bool, /) -> Ordering:
+def _order_equal(_a: Type, _b: Type, /) -> Ordering:
     return Ordering.EQUAL
+
+
+def _order_less(_a: Type, _b: Type, /) -> Ordering:
+    return Ordering.LESS
+
+
+def _order_greater(_a: Type, _b: Type, /) -> Ordering:
+    return Ordering.GREATER
 
 
 def _order_uint_uint(left: Uint, right: Uint, /) -> Ordering:
@@ -68,8 +76,15 @@ def _order_uint_uint(left: Uint, right: Uint, /) -> Ordering:
 
 
 _ORDERERS = {
-    (Bool, Bool): _order_bool_bool,
+    (Bool, Bool): _order_equal,
     (Uint, Uint): _order_uint_uint,
+    (Uint, Float): _order_less,
+    (Float, Float): _order_equal,
+    (Float, Uint): _order_greater,
+    (Duration, Duration): _order_equal,
+    (Duration, Stretch): _order_less,
+    (Stretch, Stretch): _order_equal,
+    (Stretch, Duration): _order_greater,
 }
 
 
@@ -224,8 +239,16 @@ def _uint_cast(from_: Uint, to_: Uint, /) -> CastKind:
 _ALLOWED_CASTS = {
     (Bool, Bool): lambda _a, _b, /: CastKind.EQUAL,
     (Bool, Uint): lambda _a, _b, /: CastKind.LOSSLESS,
+    (Bool, Float): lambda _a, _b, /: CastKind.LOSSLESS,
     (Uint, Bool): lambda _a, _b, /: CastKind.IMPLICIT,
     (Uint, Uint): _uint_cast,
+    # TODO: is this the best choice here?
+    #  I suppose it has to at least be LOSSLESS if we consider Float greater than Uint in OpenQASM
+    (Uint, Float): lambda _a, _b, /: CastKind.IMPLICIT,
+    (Float, Float): lambda _a, _b, /: CastKind.EQUAL,
+    (Float, Bool): lambda _a, _b, /: CastKind.IMPLICIT,
+    (Float, Uint): lambda _a, _b, /: CastKind.DANGEROUS,
+    (Duration, Stretch): lambda _a, _b, /: CastKind.IMPLICIT,
 }
 
 

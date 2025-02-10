@@ -336,6 +336,14 @@ class Binary(Expr):
         """Zero-padding bitshift to the left.  ``lhs << rhs``."""
         SHIFT_RIGHT = 13
         """Zero-padding bitshift to the right.  ``lhs >> rhs``."""
+        ADD = 14
+        """Arithmetic addition. ``lhs + rhs``."""
+        SUB = 15
+        """Arithmetic subtraction. ``lhs - rhs``."""
+        MUL = 16
+        """Arithmetic multiplication. ``lhs * rhs``."""
+        DIV = 17
+        """Arithmetic division. ``lhs / rhs``."""
 
         def __str__(self):
             return f"Binary.{super().__str__()}"

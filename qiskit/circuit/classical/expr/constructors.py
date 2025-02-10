@@ -120,13 +120,15 @@ def lift(value: typing.Any, /, type: types.Type | None = None, *, try_const: boo
             >>> expr.lift(5, types.Uint(4))
             Value(5, Uint(4, const=True))
 
-        Lifting non-classical resource scalars to non-const values::
+        Lifting non-classical resource scalars::
 
             >>> from qiskit.circuit.classical import expr, types
             >>> expr.lift(7)
             Value(7, Uint(3, const=True))
             >>> expr.lift(7, try_const=False)
             Value(7, Uint(3, const=False))
+            >>> expr.lift(0.5)
+            Value(0.5, Float(const=True))
     """
     if isinstance(value, Expr):
         if type is not None:
@@ -148,6 +150,9 @@ def lift(value: typing.Any, /, type: types.Type | None = None, *, try_const: boo
         if value < 0:
             raise ValueError("cannot represent a negative value")
         inferred = types.Uint(width=value.bit_length() or 1, const=try_const)
+        constructor = Value
+    elif isinstance(value, float):
+        inferred = types.Float(const=try_const)
         constructor = Value
     else:
         raise TypeError(f"failed to infer a type for '{value}'")
@@ -238,22 +243,22 @@ def _lift_binary_operands(left: typing.Any, right: typing.Any) -> tuple[Expr, Ex
         to be interoperable.
       * If both operands are expressions, they are returned as-is, and may require a cast node.
     """
-    left_bool = isinstance(left, bool)
-    left_int = isinstance(left, int) and not left_bool
-    right_bool = isinstance(right, bool)
-    right_int = isinstance(right, int) and not right_bool
+    left_bool_or_float = isinstance(left, (bool, float))
+    left_int = isinstance(left, int) and not left_bool_or_float
+    right_bool_or_float = isinstance(right, (bool, float))
+    right_int = isinstance(right, int) and not right_bool_or_float
     if not (left_int or right_int):
-        if left_bool == right_bool:
-            # If they're both bool, they'll lift as const here.
+        if left_bool_or_float == right_bool_or_float:
+            # If they're both scalars, they'll lift as const here.
             # If neither are, we've already checked for int, so they must be bits,
             # registers, or expressions, none of which will lift to be const.
             left = lift(left, try_const=True)
             right = lift(right, try_const=True)
-        elif not right_bool:
+        elif not right_bool_or_float:
             # Left is a bool, which should only be const if right is const.
             right = lift(right)
             left = lift(left, try_const=right.type.const)
-        elif not left_bool:
+        elif not left_bool_or_float:
             # Right is a bool, which should only be const if left is const.
             left = lift(left)
             right = lift(right, try_const=left.type.const)
@@ -621,3 +626,98 @@ def index(target: typing.Any, index: typing.Any, /) -> Expr:
     if target.type.kind is not types.Uint or index.type.kind is not types.Uint:
         raise TypeError(f"invalid types for indexing: '{target.type}' and '{index.type}'")
     return Index(target, index, types.Bool(const=target.type.const and index.type.const))
+
+
+# TODO: should have output optional type
+def _binary_sum(op: Binary.Op, left: typing.Any, right: typing.Any) -> Expr:
+    left, right = _lift_binary_operands(left, right)
+    if left.type.kind is not right.type.kind and types.order(left.type, right.type) is types.Ordering.NONE:
+        raise TypeError(f"invalid types for '{op}': '{left.type}' and '{right.type}'")
+    type = types.greater(left.type, right.type)
+    return Binary(
+        op,
+        _coerce_lossless(left, type),
+        _coerce_lossless(right, type),
+        type,
+    )
+
+
+# TODO: should definitely have output optional type
+# This allows things like Duration * Bool => Bool. Is that alright, or should we block it?
+def mul(left: typing.Any, right: typing.Any) -> Expr:
+    left, right = _lift_binary_operands(left, right)
+    type: types.Type | None = None
+    if left.type.kind in (types.Stretch, types.Duration):
+        if types.order(right.type.kind, types.Float(const=True)) is not types.Ordering.NONE:
+            type = left.type
+    elif right.type.kind in (types.Stretch, types.Duration):
+        if types.order(left.type.kind, types.Float(const=True)) is not types.Ordering.NONE:
+            type = right.type
+    elif left.type.kind is right.type.kind:
+        type = left.type
+    elif types.order(left.type, right.type) is not types.Ordering.NONE:
+        type = types.greater(left.type, right.type)
+        left = _coerce_lossless(left, type)
+        right = _coerce_lossless(right, type)
+    if type is None:
+        raise TypeError(f"invalid types for '{Binary.Op.MUL}': '{left.type}' and '{right.type}'")
+    return Binary(
+        Binary.Op.MUL,
+        left,
+        right,
+        type,
+    )
+
+
+def div(left: typing.Any, right: typing.Any) -> Expr:
+    left, right = _lift_binary_operands(left, right)
+    if left.type.kind is types.Stretch or right.type.kind is types.Stretch:
+        raise TypeError(f"invalid types for '{Binary.Op.DIV}': '{left.type}' and '{right.type}'")
+    type: types.Type
+    if left.type.kind is right.type.kind is types.Duration:
+        type = types.Float(const=True)
+    elif types.order(left.type, right.type) is not types.Ordering.NONE:
+        type = types.greater(left.type, right.type)
+
+    type: types.Type | None = None
+    if left.type.kind in (types.Stretch, types.Duration):
+        if types.order(right.type.kind, types.Float(const=True)) is not types.Ordering.NONE:
+            type = left.type
+    elif right.type.kind in (types.Stretch, types.Duration):
+        if types.order(left.type.kind, types.Float(const=True)) is not types.Ordering.NONE:
+            type = right.type
+    elif left.type.kind is right.type.kind:
+        type = left.type
+    elif types.order(left.type, right.type) is not types.Ordering.NONE:
+        type = types.greater(left.type, right.type)
+        left = _coerce_lossless(left, type)
+        right = _coerce_lossless(right, type)
+    if type is None:
+        raise TypeError(f"invalid types for '{Binary.Op.MUL}': '{left.type}' and '{right.type}'")
+    return Binary(
+        Binary.Op.MUL,
+        left,
+        right,
+        type,
+    )
+
+
+def add(left: typing.Any, right: typing.Any, /) -> Expr:
+    """Create an arithmetic addition expression node from the given values, resolving any implicit casts and
+    lifting the values into :class:`Value` nodes if required.
+
+    TODO: make duration type and update these doc examples.
+
+    Examples:
+        Addition of two durations::
+
+            >>> from qiskit.circuit import ClassicalRegister
+            >>> from qiskit.circuit.classical import expr
+            >>> expr.add(Duration(1, DurationUnit.Seconds), Duration(2, DurationUnit.Millis))
+            Binary(\
+Binary.Op.ADD, \
+Value(Duration(1, DurationUnit.Seconds), types.Duration(const=False)), \
+Value(Duration(2, DurationUnit.Seconds), types.Duration(const=False)), \
+types.Duration(const=False))
+        """
+    return _binary_sum(Binary.Op.ADD, left, right)
