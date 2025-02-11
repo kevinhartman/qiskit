@@ -19,6 +19,8 @@ from qiskit.circuit import QuantumCircuit
 from qiskit.circuit.exceptions import CircuitError
 from qiskit.utils.units import apply_prefix
 
+from qiskit._accelerate.circuit import Duration  # pylint: disable=unused-import
+
 
 def duration_in_dt(duration_in_sec: float, dt_in_sec: float) -> int:
     """

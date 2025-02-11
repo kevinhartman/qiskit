@@ -1290,6 +1290,7 @@ from .quantumregister import QuantumRegister, Qubit, AncillaRegister, AncillaQub
 from .gate import Gate
 
 # pylint: disable=cyclic-import
+from .duration import Duration
 from .controlledgate import ControlledGate
 from . import singleton
 from .instruction import Instruction

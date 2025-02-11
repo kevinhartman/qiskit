@@ -138,7 +138,7 @@ def lift(value: typing.Any, /, type: types.Type | None = None, *, try_const: boo
         if type is not None:
             raise ValueError("use 'cast' to cast existing expressions, not 'lift'")
         return value
-    from qiskit.circuit import Clbit, ClassicalRegister  # pylint: disable=cyclic-import
+    from qiskit.circuit import Clbit, ClassicalRegister, Duration  # pylint: disable=cyclic-import
 
     inferred: types.Type
     if value is True or value is False:
@@ -157,6 +157,9 @@ def lift(value: typing.Any, /, type: types.Type | None = None, *, try_const: boo
         constructor = Value
     elif isinstance(value, float):
         inferred = types.Float(const=try_const)
+        constructor = Value
+    elif isinstance(value, Duration):
+        inferred = types.Duration()
         constructor = Value
     else:
         raise TypeError(f"failed to infer a type for '{value}'")
@@ -657,7 +660,7 @@ def add(left: typing.Any, right: typing.Any, /) -> Expr:
     Examples:
         Addition of two durations::
 
-            >>> from qiskit.circuit import ClassicalRegister
+            >>> from qiskit.circuit import ClassicalRegister, Duration
             >>> from qiskit.circuit.classical import expr
             >>> expr.add(Duration(1, DurationUnit.Seconds), Duration(2, DurationUnit.Millis))
             Binary(\
@@ -678,7 +681,7 @@ def sub(left: typing.Any, right: typing.Any, /) -> Expr:
     Examples:
         Addition of two durations::
 
-            >>> from qiskit.circuit import ClassicalRegister
+            >>> from qiskit.circuit import ClassicalRegister, Duration
             >>> from qiskit.circuit.classical import expr
             >>> expr.sub(Duration(1, DurationUnit.Seconds), Duration(2, DurationUnit.Millis))
             Binary(\

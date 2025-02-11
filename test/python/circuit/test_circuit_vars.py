@@ -23,7 +23,7 @@ class TestCircuitVars(QiskitTestCase):
     tested in the suites of the specific methods."""
 
     def test_initialise_inputs(self):
-        vars_ = [expr.Var.new("a", types.Bool()), expr.Var.new("b", types.Uint(16))]
+        vars_ = [expr.Var.new("a", types.Bool()), expr.Var.new("b", types.Uint(16)), expr.Var.new("c", types.Stretch())]
         qc = QuantumCircuit(inputs=vars_)
         self.assertEqual(set(vars_), set(qc.iter_vars()))
         self.assertEqual(qc.num_vars, len(vars_))
@@ -32,7 +32,7 @@ class TestCircuitVars(QiskitTestCase):
         self.assertEqual(qc.num_declared_vars, 0)
 
     def test_initialise_captures(self):
-        vars_ = [expr.Var.new("a", types.Bool()), expr.Var.new("b", types.Uint(16))]
+        vars_ = [expr.Var.new("a", types.Bool()), expr.Var.new("b", types.Uint(16)), expr.Var.new("c", types.Stretch())]
         qc = QuantumCircuit(captures=vars_)
         self.assertEqual(set(vars_), set(qc.iter_vars()))
         self.assertEqual(qc.num_vars, len(vars_))
@@ -44,6 +44,7 @@ class TestCircuitVars(QiskitTestCase):
         vars_ = [
             (expr.Var.new("a", types.Bool()), expr.lift(True, try_const=False)),
             (expr.Var.new("b", types.Uint(16)), expr.lift(0xFFFF, try_const=False)),
+            (expr.Var.new("c", types.Uint(16, const=True)), expr.lift(0xFFFF)),
         ]
         qc = QuantumCircuit(declarations=vars_)
 
@@ -56,7 +57,7 @@ class TestCircuitVars(QiskitTestCase):
             (instruction.operation.name, instruction.operation.lvalue, instruction.operation.rvalue)
             for instruction in qc.data
         ]
-        self.assertEqual(operations, [("store", lvalue, rvalue) for lvalue, rvalue in vars_])
+        self.assertEqual(operations, [("store", lvalue, rvalue) for lvalue, rvalue in vars_ if not lvalue.type.const])
 
     def test_initialise_declarations_mapping(self):
         # Dictionary iteration order is guaranteed to be insertion order.
@@ -147,11 +148,23 @@ class TestCircuitVars(QiskitTestCase):
         self.assertEqual(b.name, "b")
         self.assertEqual(b.type, types.Uint(8))
 
+    def test_add_stretch_returns_good_var(self):
+        qc = QuantumCircuit()
+        a = qc.add_stretch("a")
+        self.assertEqual(a.name, "a")
+        self.assertEqual(a.type, types.Stretch())
+
     def test_add_var_returns_input(self):
         """Test that the `Var` returned by `add_var` is the same as the input if `Var`."""
         a = expr.Var.new("a", types.Bool())
         qc = QuantumCircuit()
         a_other = qc.add_var(a, expr.lift(True))
+        self.assertIs(a, a_other)
+
+    def test_add_stretch_returns_input(self):
+        a = expr.Var.new("a", types.Stretch())
+        qc = QuantumCircuit()
+        a_other = qc.add_stretch(a)
         self.assertIs(a, a_other)
 
     def test_add_input_returns_good_var(self):
@@ -163,6 +176,10 @@ class TestCircuitVars(QiskitTestCase):
         b = qc.add_input("b", types.Uint(8))
         self.assertEqual(b.name, "b")
         self.assertEqual(b.type, types.Uint(8))
+
+        c = qc.add_input("c", types.Stretch())
+        self.assertEqual(c.name, "c")
+        self.assertEqual(c.type, types.Stretch())
 
     def test_add_input_returns_input(self):
         """Test that the `Var` returned by `add_input` is the same as the input if `Var`."""
