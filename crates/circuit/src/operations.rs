@@ -533,12 +533,44 @@ impl StandardInstruction {
     }
 }
 
+pub trait Instruction {
+    type ParamType;
+
+    fn params(&self) -> &[Self::ParamType];
+
+    // fn blocks(&self) -> Vec<ParamType>;
+}
+
+
 pub struct StandardGateRef<'a> {
     gate: StandardGate,
     params: Option<&'a [Param]>,
 }
 
+impl<'a> Instruction for StandardGateRef<'a> {
+    type ParamType = NumericParam;
+
+    fn params(&self) -> &[Self::ParamType] {
+        todo!()
+    }
+}
+
+pub struct StandardInstructionRef<'a, T> {
+    instruction: StandardInstruction,
+    params: Option<&'a [Param]>,
+}
+
+impl<'a> Instruction for 
+
+
 impl<'a> StandardGateRef<'a> {
+    pub fn new(gate: StandardGate, params: Option<&'a [Param]>) -> Self {
+        Self {
+            gate,
+            params
+        }
+    }
+
     #[inline]
     pub fn gate(&self) -> StandardGate {
         self.gate
