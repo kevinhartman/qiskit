@@ -25,7 +25,7 @@ use crate::dag_circuit::add_global_phase;
 use crate::imports::{ANNOTATED_OPERATION, QUANTUM_CIRCUIT};
 use crate::interner::{Interned, Interner};
 use crate::object_registry::ObjectRegistry;
-use crate::operations::{Operation, OperationRef, Param, StandardGate};
+use crate::operations::{NumericParam, Operation, OperationRef, Param, StandardGate};
 use crate::packed_instruction::{PackedInstruction, PackedOperation};
 use crate::parameter_table::{ParameterTable, ParameterTableError, ParameterUse, ParameterUuid};
 use crate::register_data::RegisterData;
@@ -131,19 +131,19 @@ pub struct CircuitData {
     clbit_indices: BitLocator<ShareableClbit, ClassicalRegister>,
     param_table: ParameterTable,
     #[pyo3(get)]
-    global_phase: Param,
+    global_phase: NumericParam,
 }
 
 #[pymethods]
 impl CircuitData {
     #[new]
-    #[pyo3(signature = (qubits=None, clbits=None, data=None, reserve=0, global_phase=Param::Float(0.0)))]
+    #[pyo3(signature = (qubits=None, clbits=None, data=None, reserve=0, global_phase=NumericParam::Float(0.0)))]
     pub fn new(
         qubits: Option<Vec<ShareableQubit>>,
         clbits: Option<Vec<ShareableClbit>>,
         data: Option<&Bound<PyAny>>,
         reserve: usize,
-        global_phase: Param,
+        global_phase: NumericParam,
     ) -> PyResult<Self> {
         let mut self_ = CircuitData {
             data: Vec::new(),
@@ -152,7 +152,7 @@ impl CircuitData {
             qubits: ObjectRegistry::new(),
             clbits: ObjectRegistry::new(),
             param_table: ParameterTable::new(),
-            global_phase: Param::Float(0.),
+            global_phase: NumericParam::Float(0.),
             qregs: RegisterData::new(),
             cregs: RegisterData::new(),
             qubit_indices: BitLocator::new(),
@@ -960,14 +960,14 @@ impl CircuitData {
                 sequence.py(),
                 array
                     .iter()
-                    .map(|value| Param::Float(*value))
+                    .map(|value| NumericParam::Float(*value))
                     .zip(old_table.drain_ordered())
                     .map(|(value, (obj, uses))| (obj, value, uses)),
             )
         } else {
             let values = sequence
                 .try_iter()?
-                .map(|ob| Param::extract_no_coerce(&ob?))
+                .map(|ob| NumericParam::extract_no_coerce(&ob?))
                 .collect::<PyResult<Vec<_>>>()?;
             self.assign_parameters_from_slice(sequence.py(), &values)
         }
@@ -1101,8 +1101,8 @@ impl CircuitData {
     /// uncommon for subclasses and other parts of Qiskit to have filled in the global phase field
     /// by copies or other means, before making the parameter table consistent.
     #[setter]
-    pub fn set_global_phase(&mut self, angle: Param) -> PyResult<()> {
-        if let Param::ParameterExpression(expr) = &self.global_phase {
+    pub fn set_global_phase(&mut self, angle: NumericParam) -> PyResult<()> {
+        if let NumericParam::ParameterExpression(expr) = &self.global_phase {
             Python::with_gil(|py| -> PyResult<()> {
                 for param_ob in expr
                     .bind(py)
@@ -1123,11 +1123,11 @@ impl CircuitData {
             })?;
         }
         match angle {
-            Param::Float(angle) => {
-                self.global_phase = Param::Float(angle.rem_euclid(2. * std::f64::consts::PI));
+            NumericParam::Float(angle) => {
+                self.global_phase = NumericParam::Float(angle.rem_euclid(2. * std::f64::consts::PI));
                 Ok(())
             }
-            Param::ParameterExpression(_) => Python::with_gil(|py| -> PyResult<()> {
+            NumericParam::ParameterExpression(_) => Python::with_gil(|py| -> PyResult<()> {
                 for param_ob in angle.iter_parameters(py)? {
                     self.param_table
                         .track(&param_ob?, Some(ParameterUse::GlobalPhase))?;
@@ -1135,7 +1135,6 @@ impl CircuitData {
                 self.global_phase = angle;
                 Ok(())
             }),
-            Param::Obj(_) => Err(PyTypeError::new_err("invalid type for global phase")),
         }
     }
 
@@ -1219,7 +1218,7 @@ impl CircuitData {
         num_qubits: u32,
         num_clbits: u32,
         instructions: I,
-        global_phase: Param,
+        global_phase: NumericParam,
     ) -> PyResult<Self>
     where
         I: IntoIterator<
@@ -1303,7 +1302,7 @@ impl CircuitData {
         qubit_indices: BitLocator<ShareableQubit, QuantumRegister>,
         clbit_indices: BitLocator<ShareableClbit, ClassicalRegister>,
         instructions: I,
-        global_phase: Param,
+        global_phase: NumericParam,
     ) -> PyResult<Self>
     where
         I: IntoIterator<Item = PyResult<PackedInstruction>>,
@@ -1316,7 +1315,7 @@ impl CircuitData {
             qubits,
             clbits,
             param_table: ParameterTable::new(),
-            global_phase: Param::Float(0.0),
+            global_phase: NumericParam::Float(0.0),
             qregs,
             cregs,
             qubit_indices,
@@ -1355,10 +1354,10 @@ impl CircuitData {
         py: Python,
         num_qubits: u32,
         instructions: I,
-        global_phase: Param,
+        global_phase: NumericParam,
     ) -> PyResult<Self>
     where
-        I: IntoIterator<Item = (StandardGate, SmallVec<[Param; 3]>, SmallVec<[Qubit; 2]>)>,
+        I: IntoIterator<Item = (StandardGate, SmallVec<[NumericParam; 3]>, SmallVec<[Qubit; 2]>)>,
     {
         let instruction_iter = instructions.into_iter();
         let mut res =
@@ -1367,7 +1366,7 @@ impl CircuitData {
         let no_clbit_index = res.cargs_interner.get_default();
         for (operation, params, qargs) in instruction_iter {
             let qubits = res.qargs_interner.insert(&qargs);
-            let params = (!params.is_empty()).then(|| Box::new(params));
+            let params = (!params.is_empty()).then(|| Box::new(params.into_iter().map(|p| Param::Numeric(p)).collect()));
             res.data.push(PackedInstruction {
                 op: operation.into(),
                 qubits,
@@ -1387,7 +1386,7 @@ impl CircuitData {
         num_qubits: u32,
         num_clbits: u32,
         instruction_capacity: usize,
-        global_phase: Param,
+        global_phase: NumericParam,
     ) -> PyResult<Self> {
         let mut res = CircuitData {
             data: Vec::with_capacity(instruction_capacity),
@@ -1396,7 +1395,7 @@ impl CircuitData {
             qubits: ObjectRegistry::with_capacity(num_qubits as usize),
             clbits: ObjectRegistry::with_capacity(num_clbits as usize),
             param_table: ParameterTable::new(),
-            global_phase: Param::Float(0.0),
+            global_phase: NumericParam::Float(0.0),
             qregs: RegisterData::new(),
             cregs: RegisterData::new(),
             qubit_indices: BitLocator::with_capacity(num_qubits as usize),
@@ -1572,7 +1571,7 @@ impl CircuitData {
     }
 
     /// Assigns parameters to circuit data based on a slice of `Param`.
-    pub fn assign_parameters_from_slice(&mut self, py: Python, slice: &[Param]) -> PyResult<()> {
+    pub fn assign_parameters_from_slice(&mut self, py: Python, slice: &[NumericParam]) -> PyResult<()> {
         if slice.len() != self.param_table.num_parameters() {
             return Err(PyValueError::new_err(concat!(
                 "Mismatching number of values and parameters. For partial binding ",
@@ -1595,7 +1594,7 @@ impl CircuitData {
     pub fn assign_parameters_from_mapping<I, T>(&mut self, py: Python, iter: I) -> PyResult<()>
     where
         I: IntoIterator<Item = (ParameterUuid, T)>,
-        T: AsRef<Param>,
+        T: AsRef<NumericParam>,
     {
         let mut items = Vec::new();
         for (param_uuid, value) in iter {
@@ -1626,7 +1625,7 @@ impl CircuitData {
     }
 
     /// Returns an immutable view of the Global Phase `Param` of the circuit
-    pub fn global_phase(&self) -> &Param {
+    pub fn global_phase(&self) -> &NumericParam {
         &self.global_phase
     }
 
@@ -1692,7 +1691,7 @@ impl CircuitData {
     fn assign_parameters_inner<I, T>(&mut self, py: Python, iter: I) -> PyResult<()>
     where
         I: IntoIterator<Item = (Py<PyAny>, T, HashSet<ParameterUse>)>,
-        T: AsRef<Param> + Clone,
+        T: AsRef<NumericParam> + Clone,
     {
         let inconsistent =
             || PyRuntimeError::new_err("internal error: circuit parameter table is inconsistent");
@@ -1708,19 +1707,19 @@ impl CircuitData {
         // Bind a single `Parameter` into a Python-space `ParameterExpression`.
         let bind_expr = |expr: Borrowed<PyAny>,
                          param_ob: &Py<PyAny>,
-                         value: &Param,
+                         value: &NumericParam,
                          coerce: bool|
-         -> PyResult<Param> {
+         -> PyResult<NumericParam> {
             let new_expr = expr.call_method1(assign_attr, (param_ob, value.into_py_any(py)?))?;
             if new_expr.getattr(parameters_attr)?.len()? == 0 {
                 let out = new_expr.call_method0(numeric_attr)?;
                 if coerce {
                     out.extract()
                 } else {
-                    Param::extract_no_coerce(&out)
+                    NumericParam::extract_no_coerce(&out)
                 }
             } else {
-                Ok(Param::ParameterExpression(new_expr.unbind()))
+                Ok(NumericParam::ParameterExpression(new_expr.unbind()))
             }
         };
 
@@ -1735,7 +1734,7 @@ impl CircuitData {
             for usage in uses {
                 match usage {
                     ParameterUse::GlobalPhase => {
-                        let Param::ParameterExpression(expr) = &self.global_phase else {
+                        let NumericParam::ParameterExpression(expr) = &self.global_phase else {
                             return Err(inconsistent());
                         };
                         self.set_global_phase(bind_expr(
@@ -1753,21 +1752,12 @@ impl CircuitData {
                         let previous = &mut self.data[instruction];
                         if let Some(standard) = previous.standard_gate() {
                             let params = previous.params_mut();
-                            let Param::ParameterExpression(expr) = &params[parameter] else {
+                            let Param::Numeric(NumericParam::ParameterExpression(expr)) = &params[parameter] else {
                                 return Err(inconsistent());
                             };
                             let new_param =
                                 bind_expr(expr.bind_borrowed(py), &param_ob, value.as_ref(), true)?;
-                            params[parameter] = match new_param.clone_ref(py) {
-                                Param::Obj(obj) => {
-                                    return Err(CircuitError::new_err(format!(
-                                        "bad type after binding for gate '{}': '{}'",
-                                        standard.name(),
-                                        obj.bind(py).repr()?,
-                                    )))
-                                }
-                                param => param,
-                            };
+                            params[parameter] = Param::Numeric(new_param.clone_ref(py));
                             for uuid in uuids.iter() {
                                 self.param_table.add_use(*uuid, usage)?
                             }
@@ -1794,8 +1784,8 @@ impl CircuitData {
                             let op = previous.unpack_py_op(py)?.into_bound(py);
                             let previous_param = &previous.params_view()[parameter];
                             let new_param = match previous_param {
-                                Param::Float(_) => return Err(inconsistent()),
-                                Param::ParameterExpression(expr) => {
+                                Param::Numeric(NumericParam::Float(_)) => return Err(inconsistent()),
+                                Param::Numeric(NumericParam::ParameterExpression(expr)) => {
                                     // For user gates, we don't coerce floats to integers in `Param`
                                     // so that users can use them if they choose.
                                     let new_param = bind_expr(
@@ -1814,20 +1804,20 @@ impl CircuitData {
                                     // `ParameterExperssion` after binding would have been coerced
                                     // to a numeric quantity already, so the match here is
                                     // definitely parameterized.
-                                    match new_param {
-                                        Param::ParameterExpression(_) => new_param,
-                                        new_param => Param::extract_no_coerce(&op.call_method1(
+                                    Param::Numeric(match new_param {
+                                        NumericParam::ParameterExpression(_) => new_param,
+                                        new_param => NumericParam::extract_no_coerce(&op.call_method1(
                                             validate_parameter_attr,
                                             (new_param,),
                                         )?)?,
-                                    }
+                                    })
                                 }
                                 Param::Obj(obj) => {
                                     let obj = obj.bind_borrowed(py);
                                     if !obj.is_instance(QUANTUM_CIRCUIT.get_bound(py))? {
                                         return Err(inconsistent());
                                     }
-                                    Param::extract_no_coerce(
+                                    Param::Obj(
                                         &obj.call_method(
                                             assign_parameters_attr,
                                             ([(&param_ob, value.as_ref())].into_py_dict(py)?,),
@@ -1835,8 +1825,8 @@ impl CircuitData {
                                                 &[("inplace", false), ("flat_input", true)]
                                                     .into_py_dict(py)?,
                                             ),
-                                        )?,
-                                    )?
+                                        )?.unbind(),
+                                    )
                                 }
                             };
                             op.getattr(params_attr)?.set_item(parameter, new_param)?;
@@ -1928,7 +1918,7 @@ impl CircuitData {
             qubits: other.qubits.clone(),
             clbits: other.clbits.clone(),
             param_table: ParameterTable::new(),
-            global_phase: Param::Float(0.0),
+            global_phase: NumericParam::Float(0.0),
             qregs: other.qregs.clone(),
             cregs: other.cregs.clone(),
             qubit_indices: other.qubit_indices.clone(),
@@ -1952,23 +1942,18 @@ impl CircuitData {
     }
 
     /// Add a param to the current global phase of the circuit
-    pub fn add_global_phase(&mut self, value: &Param) -> PyResult<()> {
-        match value {
-            Param::Obj(_) => Err(PyTypeError::new_err(
-                "Invalid parameter type, only float and parameter expression are supported",
-            )),
-            _ => self.set_global_phase(add_global_phase(&self.global_phase, value)?),
-        }
+    pub fn add_global_phase(&mut self, value: &NumericParam) -> PyResult<()> {
+        self.set_global_phase(add_global_phase(&self.global_phase, value)?)
     }
 }
 
 /// Helper struct for `assign_parameters` to allow use of `Param::extract_no_coerce` in
 /// PyO3-provided `FromPyObject` implementations on containers.
 #[repr(transparent)]
-struct AssignParam(Param);
+struct AssignParam(NumericParam);
 impl<'py> FromPyObject<'py> for AssignParam {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        Ok(Self(Param::extract_no_coerce(ob)?))
+        Ok(Self(NumericParam::extract_no_coerce(ob)?))
     }
 }
 

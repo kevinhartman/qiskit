@@ -13,7 +13,7 @@
 use approx::relative_eq;
 use std::f64::consts::PI;
 use std::{fmt, vec};
-
+use std::ops::Index;
 use crate::circuit_data::CircuitData;
 use crate::imports::{get_std_gate_class, BARRIER, DELAY, MEASURE, RESET};
 use crate::imports::{PARAMETER_EXPRESSION, QUANTUM_CIRCUIT, UNITARY_GATE};
@@ -35,43 +35,110 @@ use pyo3::{intern, IntoPyObjectExt, Python};
 
 #[derive(Clone, Debug, IntoPyObject, IntoPyObjectRef)]
 pub enum Param {
-    ParameterExpression(PyObject),
-    Float(f64),
+    Numeric(NumericParam),
     Obj(PyObject),
 }
 
-impl Param {
-    pub fn eq(&self, py: Python, other: &Param) -> PyResult<bool> {
+#[derive(Clone, Debug, IntoPyObject, IntoPyObjectRef)]
+pub enum NumericParam {
+    Float(f64),
+    ParameterExpression(PyObject),
+}
+
+impl From<NumericParam> for Param {
+    fn from(value: NumericParam) -> Self {
+        Self::Numeric(value)
+    }
+}
+
+impl NumericParam {
+    pub fn eq(&self, py: Python, other: &NumericParam) -> PyResult<bool> {
         match [self, other] {
             [Self::Float(a), Self::Float(b)] => Ok(a == b),
             [Self::Float(a), Self::ParameterExpression(b)] => b.bind(py).eq(a),
             [Self::ParameterExpression(a), Self::Float(b)] => a.bind(py).eq(b),
             [Self::ParameterExpression(a), Self::ParameterExpression(b)] => a.bind(py).eq(b),
-            [Self::Obj(_), Self::Float(_)] => Ok(false),
-            [Self::Float(_), Self::Obj(_)] => Ok(false),
-            [Self::Obj(a), Self::ParameterExpression(b)] => a.bind(py).eq(b),
-            [Self::Obj(a), Self::Obj(b)] => a.bind(py).eq(b),
-            [Self::ParameterExpression(a), Self::Obj(b)] => a.bind(py).eq(b),
         }
     }
 
-    pub fn is_close(&self, py: Python, other: &Param, max_relative: f64) -> PyResult<bool> {
+    pub fn is_close(&self, py: Python, other: &NumericParam, max_relative: f64) -> PyResult<bool> {
         match [self, other] {
             [Self::Float(a), Self::Float(b)] => Ok(relative_eq!(a, b, max_relative = max_relative)),
             _ => self.eq(py, other),
+        }
+    }
+
+    /// Extract from a Python object without numeric coercion to float.  The default conversion will
+    /// coerce integers into floats, but in things like `assign_parameters`, this is not always
+    /// desirable.
+    pub fn extract_no_coerce(ob: &Bound<PyAny>) -> PyResult<Self> {
+        if ob.is_instance_of::<PyFloat>() {
+            Ok(NumericParam::Float(ob.extract()?))
+        } else if ob.is_instance(PARAMETER_EXPRESSION.get_bound(ob.py()))? {
+            Ok(NumericParam::ParameterExpression(ob.clone().unbind()))
+        } else {
+            Err(PyValueError::new_err("not a numeric parameter"))
+        }
+    }
+
+    /// Clones the [NumericParam] object safely by reference count or copying.
+    pub fn clone_ref(&self, py: Python) -> Self {
+        match self {
+            NumericParam::ParameterExpression(exp) => NumericParam::ParameterExpression(exp.clone_ref(py)),
+            NumericParam::Float(float) => NumericParam::Float(*float),
+        }
+    }
+}
+
+impl Param {
+    pub fn as_numeric(&self) -> Option<&NumericParam> {
+        match self {
+            Param::Numeric(param) => Some(param),
+            _ => None
+        }
+    }
+
+    pub fn eq(&self, py: Python, other: &Param) -> PyResult<bool> {
+        match [self, other] {
+            [Self::Numeric(a), Self::Numeric(b)] => a.eq(py, b),
+            [Self::Numeric(NumericParam::ParameterExpression(a)), Self::Obj(b)] => a.bind(py).eq(b),
+            [Self::Obj(a), Self::Numeric(NumericParam::ParameterExpression(b)) ] => a.bind(py).eq(b),
+            _ => Ok(false)
         }
     }
 }
 
 impl<'py> FromPyObject<'py> for Param {
     fn extract_bound(b: &Bound<'py, PyAny>) -> Result<Self, PyErr> {
-        Ok(if b.is_instance(PARAMETER_EXPRESSION.get_bound(b.py()))? {
-            Param::ParameterExpression(b.clone().unbind())
-        } else if let Ok(val) = b.extract::<f64>() {
-            Param::Float(val)
+        if let Ok(numeric) = b.extract::<NumericParam>() {
+            Ok(Param::Numeric(numeric))
         } else {
-            Param::Obj(b.clone().unbind())
+            Ok(Param::Obj(b.clone().unbind()))
+        }
+    }
+}
+
+impl<'py> FromPyObject<'py> for NumericParam {
+    fn extract_bound(b: &Bound<'py, PyAny>) -> Result<Self, PyErr> {
+        Ok(if b.is_instance(PARAMETER_EXPRESSION.get_bound(b.py()))? {
+            NumericParam::ParameterExpression(b.clone().unbind())
+        } else {
+            let Ok(val) = b.extract::<f64>()?;
+            NumericParam::Float(val)
         })
+    }
+}
+
+impl NumericParam {
+    /// Get an iterator over any Python-space `Parameter` instances tracked within this `Param`.
+    pub fn iter_parameters<'py>(&self, py: Python<'py>) -> PyResult<ParamParameterIter<'py>> {
+        let parameters_attr = intern!(py, "parameters");
+        match self {
+            NumericParam::Float(_) => Ok(ParamParameterIter(None)),
+            NumericParam::ParameterExpression(expr) => Ok(ParamParameterIter(Some(
+                expr.bind(py).getattr(parameters_attr)?.try_iter()?,
+            ))),
+        }
     }
 }
 
@@ -80,10 +147,7 @@ impl Param {
     pub fn iter_parameters<'py>(&self, py: Python<'py>) -> PyResult<ParamParameterIter<'py>> {
         let parameters_attr = intern!(py, "parameters");
         match self {
-            Param::Float(_) => Ok(ParamParameterIter(None)),
-            Param::ParameterExpression(expr) => Ok(ParamParameterIter(Some(
-                expr.bind(py).getattr(parameters_attr)?.try_iter()?,
-            ))),
+            Param::Numeric(numeric) => numeric.iter_parameters(py),
             Param::Obj(obj) => {
                 let obj = obj.bind(py);
                 if obj.is_instance(QUANTUM_CIRCUIT.get_bound(py))? {
@@ -97,24 +161,10 @@ impl Param {
         }
     }
 
-    /// Extract from a Python object without numeric coercion to float.  The default conversion will
-    /// coerce integers into floats, but in things like `assign_parameters`, this is not always
-    /// desirable.
-    pub fn extract_no_coerce(ob: &Bound<PyAny>) -> PyResult<Self> {
-        Ok(if ob.is_instance_of::<PyFloat>() {
-            Param::Float(ob.extract()?)
-        } else if ob.is_instance(PARAMETER_EXPRESSION.get_bound(ob.py()))? {
-            Param::ParameterExpression(ob.clone().unbind())
-        } else {
-            Param::Obj(ob.clone().unbind())
-        })
-    }
-
     /// Clones the [Param] object safely by reference count or copying.
     pub fn clone_ref(&self, py: Python) -> Self {
         match self {
-            Param::ParameterExpression(exp) => Param::ParameterExpression(exp.clone_ref(py)),
-            Param::Float(float) => Param::Float(*float),
+            Param::Numeric(numeric) => Param::Numeric(numeric.clone_ref(py)),
             Param::Obj(obj) => Param::Obj(obj.clone_ref(py)),
         }
     }
@@ -129,10 +179,16 @@ impl AsRef<Param> for Param {
     }
 }
 
-// Conveniently converts an f64 into a `Param`.
-impl From<f64> for Param {
+impl AsRef<NumericParam> for NumericParam {
+    fn as_ref(&self) -> &NumericParam {
+        self
+    }
+}
+
+// Conveniently converts an f64 into a `NumericParam`.
+impl From<f64> for NumericParam {
     fn from(value: f64) -> Self {
-        Param::Float(value)
+        NumericParam::Float(value)
     }
 }
 
@@ -477,6 +533,22 @@ impl StandardInstruction {
     }
 }
 
+pub struct StandardGateRef<'a> {
+    gate: StandardGate,
+    params: Option<&'a [Param]>,
+}
+
+impl<'a> StandardGateRef<'a> {
+    #[inline]
+    pub fn gate(&self) -> StandardGate {
+        self.gate
+    }
+
+    pub fn definition(&self) -> Option<CircuitData> {
+
+    }
+}
+
 #[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 #[repr(u8)]
 #[pyclass(module = "qiskit._accelerate.circuit", eq, eq_int)]
@@ -659,11 +731,23 @@ impl StandardGate {
     }
 
     pub fn inverse(&self, params: &[Param]) -> Option<(StandardGate, SmallVec<[Param; 3]>)> {
+        // A helper struct for accessing params we know to be numeric in context.
+        struct AsNumeric<'a>(&'a [Param]);
+
+        impl<'a> Index<usize> for AsNumeric<'a> {
+            type Output = NumericParam;
+
+            fn index(&self, index: usize) -> &Self::Output {
+                self.0[index].as_numeric().unwrap()
+            }
+        }
+
+        let params = AsNumeric(params);
         match self {
             Self::GlobalPhase => Some(Python::with_gil(|py| -> (Self, SmallVec<[Param; 3]>) {
                 (
                     Self::GlobalPhase,
-                    smallvec![multiply_param(&params[0], -1.0, py)],
+                    smallvec![multiply_param(&params[0], -1.0, py).into()],
                 )
             })),
             Self::H => Some((Self::H, smallvec![])),
@@ -922,7 +1006,7 @@ impl Operation for StandardGate {
     fn matrix(&self, params: &[Param]) -> Option<Array2<Complex64>> {
         match self {
             Self::GlobalPhase => match params {
-                [Param::Float(theta)] => {
+                [Param::Numeric(NumericParam::Float(theta))] => {
                     Some(aview2(&gate_matrix::global_phase_gate(*theta)).to_owned())
                 }
                 _ => None,
@@ -948,25 +1032,25 @@ impl Operation for StandardGate {
                 _ => None,
             },
             Self::Phase => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::phase_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::phase_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::R => match params {
-                [Param::Float(theta), Param::Float(phi)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(phi))] => {
                     Some(aview2(&gate_matrix::r_gate(*theta, *phi)).to_owned())
                 }
                 _ => None,
             },
             Self::RX => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::rx_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::rx_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::RY => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::ry_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::ry_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::RZ => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::rz_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::rz_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::S => match params {
@@ -994,23 +1078,23 @@ impl Operation for StandardGate {
                 _ => None,
             },
             Self::U => match params {
-                [Param::Float(theta), Param::Float(phi), Param::Float(lam)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(phi)), Param::Numeric(NumericParam::Float(lam))] => {
                     Some(aview2(&gate_matrix::u_gate(*theta, *phi, *lam)).to_owned())
                 }
                 _ => None,
             },
             Self::U1 => match params[0] {
-                Param::Float(val) => Some(aview2(&gate_matrix::u1_gate(val)).to_owned()),
+                Param::Numeric(NumericParam::Float(val)) => Some(aview2(&gate_matrix::u1_gate(val)).to_owned()),
                 _ => None,
             },
             Self::U2 => match params {
-                [Param::Float(phi), Param::Float(lam)] => {
+                [Param::Numeric(NumericParam::Float(phi)), Param::Numeric(NumericParam::Float(lam))] => {
                     Some(aview2(&gate_matrix::u2_gate(*phi, *lam)).to_owned())
                 }
                 _ => None,
             },
             Self::U3 => match params {
-                [Param::Float(theta), Param::Float(phi), Param::Float(lam)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(phi)), Param::Numeric(NumericParam::Float(lam))] => {
                     Some(aview2(&gate_matrix::u3_gate(*theta, *phi, *lam)).to_owned())
                 }
                 _ => None,
@@ -1048,19 +1132,19 @@ impl Operation for StandardGate {
                 _ => None,
             },
             Self::CPhase => match params {
-                [Param::Float(lam)] => Some(aview2(&gate_matrix::cp_gate(*lam)).to_owned()),
+                [Param::Numeric(NumericParam::Float(lam))] => Some(aview2(&gate_matrix::cp_gate(*lam)).to_owned()),
                 _ => None,
             },
             Self::CRX => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::crx_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::crx_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::CRY => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::cry_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::cry_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::CRZ => match params {
-                [Param::Float(theta)] => Some(aview2(&gate_matrix::crz_gate(*theta)).to_owned()),
+                [Param::Numeric(NumericParam::Float(theta))] => Some(aview2(&gate_matrix::crz_gate(*theta)).to_owned()),
                 _ => None,
             },
             Self::CS => match params {
@@ -1076,45 +1160,45 @@ impl Operation for StandardGate {
                 _ => None,
             },
             Self::CU => match params {
-                [Param::Float(theta), Param::Float(phi), Param::Float(lam), Param::Float(gamma)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(phi)), Param::Numeric(NumericParam::Float(lam)), Param::Numeric(NumericParam::Float(gamma))] => {
                     Some(aview2(&gate_matrix::cu_gate(*theta, *phi, *lam, *gamma)).to_owned())
                 }
                 _ => None,
             },
             Self::CU1 => match params[0] {
-                Param::Float(lam) => Some(aview2(&gate_matrix::cu1_gate(lam)).to_owned()),
+                Param::Numeric(NumericParam::Float(lam)) => Some(aview2(&gate_matrix::cu1_gate(lam)).to_owned()),
                 _ => None,
             },
             Self::CU3 => match params {
-                [Param::Float(theta), Param::Float(phi), Param::Float(lam)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(phi)), Param::Numeric(NumericParam::Float(lam))] => {
                     Some(aview2(&gate_matrix::cu3_gate(*theta, *phi, *lam)).to_owned())
                 }
                 _ => None,
             },
             Self::RXX => match params[0] {
-                Param::Float(theta) => Some(aview2(&gate_matrix::rxx_gate(theta)).to_owned()),
+                Param::Numeric(NumericParam::Float(theta)) => Some(aview2(&gate_matrix::rxx_gate(theta)).to_owned()),
                 _ => None,
             },
             Self::RYY => match params[0] {
-                Param::Float(theta) => Some(aview2(&gate_matrix::ryy_gate(theta)).to_owned()),
+                Param::Numeric(NumericParam::Float(theta)) => Some(aview2(&gate_matrix::ryy_gate(theta)).to_owned()),
                 _ => None,
             },
             Self::RZZ => match params[0] {
-                Param::Float(theta) => Some(aview2(&gate_matrix::rzz_gate(theta)).to_owned()),
+                Param::Numeric(NumericParam::Float(theta)) => Some(aview2(&gate_matrix::rzz_gate(theta)).to_owned()),
                 _ => None,
             },
             Self::RZX => match params[0] {
-                Param::Float(theta) => Some(aview2(&gate_matrix::rzx_gate(theta)).to_owned()),
+                Param::Numeric(NumericParam::Float(theta)) => Some(aview2(&gate_matrix::rzx_gate(theta)).to_owned()),
                 _ => None,
             },
             Self::XXMinusYY => match params {
-                [Param::Float(theta), Param::Float(beta)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(beta))] => {
                     Some(aview2(&gate_matrix::xx_minus_yy_gate(*theta, *beta)).to_owned())
                 }
                 _ => None,
             },
             Self::XXPlusYY => match params {
-                [Param::Float(theta), Param::Float(beta)] => {
+                [Param::Numeric(NumericParam::Float(theta)), Param::Numeric(NumericParam::Float(beta))] => {
                     Some(aview2(&gate_matrix::xx_plus_yy_gate(*theta, *beta)).to_owned())
                 }
                 _ => None,
@@ -2398,80 +2482,75 @@ impl Operation for StandardGate {
     }
 }
 
-const FLOAT_ZERO: Param = Param::Float(0.0);
+const FLOAT_ZERO: NumericParam = NumericParam::Float(0.0);
 
 // Return explicitly requested copy of `param`, handling
 // each variant separately.
-fn clone_param(param: &Param, py: Python) -> Param {
+fn clone_param(param: &NumericParam, py: Python) -> NumericParam {
     match param {
-        Param::Float(theta) => Param::Float(*theta),
-        Param::ParameterExpression(theta) => Param::ParameterExpression(theta.clone_ref(py)),
-        Param::Obj(_) => unreachable!(),
+        NumericParam::Float(theta) => NumericParam::Float(*theta),
+        NumericParam::ParameterExpression(theta) => NumericParam::ParameterExpression(theta.clone_ref(py)),
     }
 }
 
 /// Multiply a ``Param`` with a float.
-pub fn multiply_param(param: &Param, mult: f64, py: Python) -> Param {
+pub fn multiply_param(param: &NumericParam, mult: f64, py: Python) -> NumericParam {
     match param {
-        Param::Float(theta) => Param::Float(theta * mult),
-        Param::ParameterExpression(theta) => Param::ParameterExpression(
+        NumericParam::Float(theta) => NumericParam::Float(theta * mult),
+        NumericParam::ParameterExpression(theta) => NumericParam::ParameterExpression(
             theta
                 .clone_ref(py)
                 .call_method1(py, intern!(py, "__rmul__"), (mult,))
                 .expect("Multiplication of Parameter expression by float failed."),
         ),
-        Param::Obj(_) => unreachable!("Unsupported multiplication of a Param::Obj."),
     }
 }
 
 /// Multiply two ``Param``s.
-pub fn multiply_params(param1: Param, param2: Param, py: Python) -> Param {
+pub fn multiply_params(param1: NumericParam, param2: NumericParam, py: Python) -> NumericParam {
     match (&param1, &param2) {
-        (Param::Float(theta), Param::Float(lambda)) => Param::Float(theta * lambda),
-        (param, Param::Float(theta)) => multiply_param(param, *theta, py),
-        (Param::Float(theta), param) => multiply_param(param, *theta, py),
-        (Param::ParameterExpression(p1), Param::ParameterExpression(p2)) => {
-            Param::ParameterExpression(
+        (NumericParam::Float(theta), NumericParam::Float(lambda)) => NumericParam::Float(theta * lambda),
+        (param, NumericParam::Float(theta)) => multiply_param(param, *theta, py),
+        (NumericParam::Float(theta), param) => multiply_param(param, *theta, py),
+        (NumericParam::ParameterExpression(p1), NumericParam::ParameterExpression(p2)) => {
+            NumericParam::ParameterExpression(
                 p1.clone_ref(py)
                     .call_method1(py, intern!(py, "__rmul__"), (p2,))
                     .expect("Parameter expression multiplication failed"),
             )
         }
-        _ => unreachable!("Unsupported multiplication."),
     }
 }
 
-pub fn add_param(param: &Param, summand: f64, py: Python) -> Param {
+pub fn add_param(param: &NumericParam, summand: f64, py: Python) -> NumericParam {
     match param {
-        Param::Float(theta) => Param::Float(*theta + summand),
-        Param::ParameterExpression(theta) => Param::ParameterExpression(
+        NumericParam::Float(theta) => NumericParam::Float(*theta + summand),
+        NumericParam::ParameterExpression(theta) => NumericParam::ParameterExpression(
             theta
                 .clone_ref(py)
                 .call_method1(py, intern!(py, "__add__"), (summand,))
                 .expect("Sum of Parameter expression and float failed."),
         ),
-        Param::Obj(_) => unreachable!(),
     }
 }
 
-pub fn radd_param(param1: Param, param2: Param, py: Python) -> Param {
+pub fn radd_param(param1: NumericParam, param2: NumericParam, py: Python) -> NumericParam {
     match [&param1, &param2] {
-        [Param::Float(theta), Param::Float(lambda)] => Param::Float(theta + lambda),
-        [Param::Float(theta), Param::ParameterExpression(_lambda)] => {
+        [NumericParam::Float(theta), NumericParam::Float(lambda)] => NumericParam::Float(theta + lambda),
+        [NumericParam::Float(theta), NumericParam::ParameterExpression(_lambda)] => {
             add_param(&param2, *theta, py)
         }
-        [Param::ParameterExpression(_theta), Param::Float(lambda)] => {
+        [NumericParam::ParameterExpression(_theta), NumericParam::Float(lambda)] => {
             add_param(&param1, *lambda, py)
         }
-        [Param::ParameterExpression(theta), Param::ParameterExpression(lambda)] => {
-            Param::ParameterExpression(
+        [NumericParam::ParameterExpression(theta), NumericParam::ParameterExpression(lambda)] => {
+            NumericParam::ParameterExpression(
                 theta
                     .clone_ref(py)
                     .call_method1(py, intern!(py, "__radd__"), (lambda,))
                     .expect("Parameter expression addition failed"),
             )
         }
-        _ => unreachable!(),
     }
 }
 

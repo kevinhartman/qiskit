@@ -31,7 +31,7 @@ use crate::dot_utils::build_dot;
 use crate::error::DAGCircuitError;
 use crate::interner::{Interned, InternedMap, Interner};
 use crate::object_registry::{ObjectRegistry, PyObjectAsKey};
-use crate::operations::{ArrayType, Operation, OperationRef, Param, PyInstruction, StandardGate};
+use crate::operations::{ArrayType, NumericParam, Operation, OperationRef, Param, PyInstruction, StandardGate};
 use crate::packed_instruction::{PackedInstruction, PackedOperation};
 use crate::register_data::RegisterData;
 use crate::rustworkx_core_vnext::isomorphism;
@@ -7455,28 +7455,27 @@ impl ::std::ops::Index<NodeIndex> for DAGCircuit {
 
 /// Add to global phase. Global phase can only be Float or ParameterExpression so this
 /// does not handle the full possibility of parameter values.
-pub(crate) fn add_global_phase(phase: &Param, other: &Param) -> PyResult<Param> {
+pub(crate) fn add_global_phase(phase: &NumericParam, other: &NumericParam) -> PyResult<NumericParam> {
     Ok(match [phase, other] {
-        [Param::Float(a), Param::Float(b)] => Param::Float(a + b),
-        [Param::Float(a), Param::ParameterExpression(b)] => {
-            Param::ParameterExpression(Python::with_gil(|py| -> PyResult<PyObject> {
+        [NumericParam::Float(a), NumericParam::Float(b)] => NumericParam::Float(a + b),
+        [NumericParam::Float(a), NumericParam::ParameterExpression(b)] => {
+            NumericParam::ParameterExpression(Python::with_gil(|py| -> PyResult<PyObject> {
                 b.clone_ref(py)
                     .call_method1(py, intern!(py, "__radd__"), (*a,))
             })?)
         }
-        [Param::ParameterExpression(a), Param::Float(b)] => {
-            Param::ParameterExpression(Python::with_gil(|py| -> PyResult<PyObject> {
+        [NumericParam::ParameterExpression(a), NumericParam::Float(b)] => {
+            NumericParam::ParameterExpression(Python::with_gil(|py| -> PyResult<PyObject> {
                 a.clone_ref(py)
                     .call_method1(py, intern!(py, "__add__"), (*b,))
             })?)
         }
-        [Param::ParameterExpression(a), Param::ParameterExpression(b)] => {
-            Param::ParameterExpression(Python::with_gil(|py| -> PyResult<PyObject> {
+        [NumericParam::ParameterExpression(a), NumericParam::ParameterExpression(b)] => {
+            NumericParam::ParameterExpression(Python::with_gil(|py| -> PyResult<PyObject> {
                 a.clone_ref(py)
                     .call_method1(py, intern!(py, "__add__"), (b,))
             })?)
         }
-        _ => panic!("Invalid global phase"),
     })
 }
 
