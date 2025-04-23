@@ -1124,7 +1124,8 @@ impl CircuitData {
         }
         match angle {
             NumericParam::Float(angle) => {
-                self.global_phase = NumericParam::Float(angle.rem_euclid(2. * std::f64::consts::PI));
+                self.global_phase =
+                    NumericParam::Float(angle.rem_euclid(2. * std::f64::consts::PI));
                 Ok(())
             }
             NumericParam::ParameterExpression(_) => Python::with_gil(|py| -> PyResult<()> {
@@ -1357,7 +1358,13 @@ impl CircuitData {
         global_phase: NumericParam,
     ) -> PyResult<Self>
     where
-        I: IntoIterator<Item = (StandardGate, SmallVec<[NumericParam; 3]>, SmallVec<[Qubit; 2]>)>,
+        I: IntoIterator<
+            Item = (
+                StandardGate,
+                SmallVec<[NumericParam; 3]>,
+                SmallVec<[Qubit; 2]>,
+            ),
+        >,
     {
         let instruction_iter = instructions.into_iter();
         let mut res =
@@ -1366,7 +1373,8 @@ impl CircuitData {
         let no_clbit_index = res.cargs_interner.get_default();
         for (operation, params, qargs) in instruction_iter {
             let qubits = res.qargs_interner.insert(&qargs);
-            let params = (!params.is_empty()).then(|| Box::new(params.into_iter().map(|p| Param::Numeric(p)).collect()));
+            let params = (!params.is_empty())
+                .then(|| Box::new(params.into_iter().map(|p| Param::Numeric(p)).collect()));
             res.data.push(PackedInstruction {
                 op: operation.into(),
                 qubits,
@@ -1571,7 +1579,11 @@ impl CircuitData {
     }
 
     /// Assigns parameters to circuit data based on a slice of `Param`.
-    pub fn assign_parameters_from_slice(&mut self, py: Python, slice: &[NumericParam]) -> PyResult<()> {
+    pub fn assign_parameters_from_slice(
+        &mut self,
+        py: Python,
+        slice: &[NumericParam],
+    ) -> PyResult<()> {
         if slice.len() != self.param_table.num_parameters() {
             return Err(PyValueError::new_err(concat!(
                 "Mismatching number of values and parameters. For partial binding ",
@@ -1752,7 +1764,9 @@ impl CircuitData {
                         let previous = &mut self.data[instruction];
                         if let Some(standard) = previous.standard_gate() {
                             let params = previous.params_mut();
-                            let Param::Numeric(NumericParam::ParameterExpression(expr)) = &params[parameter] else {
+                            let Param::Numeric(NumericParam::ParameterExpression(expr)) =
+                                &params[parameter]
+                            else {
                                 return Err(inconsistent());
                             };
                             let new_param =
@@ -1784,7 +1798,9 @@ impl CircuitData {
                             let op = previous.unpack_py_op(py)?.into_bound(py);
                             let previous_param = &previous.params_view()[parameter];
                             let new_param = match previous_param {
-                                Param::Numeric(NumericParam::Float(_)) => return Err(inconsistent()),
+                                Param::Numeric(NumericParam::Float(_)) => {
+                                    return Err(inconsistent())
+                                }
                                 Param::Numeric(NumericParam::ParameterExpression(expr)) => {
                                     // For user gates, we don't coerce floats to integers in `Param`
                                     // so that users can use them if they choose.
@@ -1806,10 +1822,12 @@ impl CircuitData {
                                     // definitely parameterized.
                                     Param::Numeric(match new_param {
                                         NumericParam::ParameterExpression(_) => new_param,
-                                        new_param => NumericParam::extract_no_coerce(&op.call_method1(
-                                            validate_parameter_attr,
-                                            (new_param,),
-                                        )?)?,
+                                        new_param => {
+                                            NumericParam::extract_no_coerce(&op.call_method1(
+                                                validate_parameter_attr,
+                                                (new_param,),
+                                            )?)?
+                                        }
                                     })
                                 }
                                 Param::Obj(obj) => {
@@ -1825,7 +1843,8 @@ impl CircuitData {
                                                 &[("inplace", false), ("flat_input", true)]
                                                     .into_py_dict(py)?,
                                             ),
-                                        )?.unbind(),
+                                        )?
+                                        .unbind(),
                                     )
                                 }
                             };

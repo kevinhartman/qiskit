@@ -24,7 +24,10 @@ use smallvec::SmallVec;
 use crate::circuit_data::CircuitData;
 use crate::imports::{get_std_gate_class, BARRIER, DEEPCOPY, DELAY, MEASURE, RESET, UNITARY_GATE};
 use crate::interner::Interned;
-use crate::operations::{Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, UnitaryGate};
+use crate::operations::{
+    Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate,
+    StandardGateRef, StandardInstruction, UnitaryGate,
+};
 use crate::{Clbit, Qubit};
 
 /// The logical discriminant of `PackedOperation`.
@@ -703,7 +706,9 @@ impl PackedInstruction {
     /// refers to a Python-space object, `None` is returned.
     #[inline]
     pub fn standard_gate(&self) -> Option<StandardGateRef> {
-        self.op.try_standard_gate().map(|gate| StandardGateRef::new(gate, Some(self.params_view())))
+        self.op
+            .try_standard_gate()
+            .map(|gate| StandardGateRef::new(gate, Some(self.params_view())))
     }
 
     /// Get a slice view onto the contained parameters.

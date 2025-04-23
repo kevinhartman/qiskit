@@ -31,7 +31,9 @@ use crate::dot_utils::build_dot;
 use crate::error::DAGCircuitError;
 use crate::interner::{Interned, InternedMap, Interner};
 use crate::object_registry::{ObjectRegistry, PyObjectAsKey};
-use crate::operations::{ArrayType, NumericParam, Operation, OperationRef, Param, PyInstruction, StandardGate};
+use crate::operations::{
+    ArrayType, NumericParam, Operation, OperationRef, Param, PyInstruction, StandardGate,
+};
 use crate::packed_instruction::{PackedInstruction, PackedOperation};
 use crate::register_data::RegisterData;
 use crate::rustworkx_core_vnext::isomorphism;
@@ -7455,7 +7457,10 @@ impl ::std::ops::Index<NodeIndex> for DAGCircuit {
 
 /// Add to global phase. Global phase can only be Float or ParameterExpression so this
 /// does not handle the full possibility of parameter values.
-pub(crate) fn add_global_phase(phase: &NumericParam, other: &NumericParam) -> PyResult<NumericParam> {
+pub(crate) fn add_global_phase(
+    phase: &NumericParam,
+    other: &NumericParam,
+) -> PyResult<NumericParam> {
     Ok(match [phase, other] {
         [NumericParam::Float(a), NumericParam::Float(b)] => NumericParam::Float(a + b),
         [NumericParam::Float(a), NumericParam::ParameterExpression(b)] => {
