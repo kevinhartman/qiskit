@@ -24,10 +24,7 @@ use smallvec::SmallVec;
 use crate::circuit_data::CircuitData;
 use crate::imports::{get_std_gate_class, BARRIER, DEEPCOPY, DELAY, MEASURE, RESET, UNITARY_GATE};
 use crate::interner::Interned;
-use crate::operations::{
-    Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate,
-    StandardGateRef, StandardInstruction, UnitaryGate,
-};
+use crate::operations::{Instruction, NumericParam, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, UnitaryGate};
 use crate::{Clbit, Qubit};
 
 /// The logical discriminant of `PackedOperation`.
@@ -733,7 +730,7 @@ impl PackedInstruction {
     pub fn is_parameterized(&self) -> bool {
         self.params_view()
             .iter()
-            .any(|x| matches!(x, Param::ParameterExpression(_)))
+            .any(|x| matches!(x, Param::Numeric(NumericParam::ParameterExpression(_))))
     }
 
     #[inline]
@@ -827,5 +824,25 @@ impl PackedInstruction {
             }
             _ => Ok(false),
         }
+    }
+}
+
+impl Instruction for PackedInstruction {
+    type ParamType = Param;
+
+    fn params(&self) -> &[Self::ParamType] {
+        self.params_view()
+    }
+
+    fn blocks(&self) -> Vec<CircuitData> {
+        self.op.
+    }
+
+    fn matrix(&self) -> Option<Array2<Complex64>> {
+        todo!()
+    }
+
+    fn definition(&self) -> Option<CircuitData> {
+        todo!()
     }
 }
