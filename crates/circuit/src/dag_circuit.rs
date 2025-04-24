@@ -4946,7 +4946,7 @@ impl DAGCircuit {
                     && inst.op.num_clbits() == 0
                     && !inst.is_parameterized()
                     && (inst.op.try_standard_gate().is_some()
-                        || inst.op.matrix(inst.params_view()).is_some())),
+                        || inst.view().matrix().is_some())),
                 _ => Ok(false),
             }
         };

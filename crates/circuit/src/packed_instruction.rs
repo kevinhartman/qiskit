@@ -24,7 +24,7 @@ use smallvec::SmallVec;
 use crate::circuit_data::CircuitData;
 use crate::imports::{get_std_gate_class, BARRIER, DEEPCOPY, DELAY, MEASURE, RESET, UNITARY_GATE};
 use crate::interner::Interned;
-use crate::operations::{Instruction, NumericParam, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, UnitaryGate};
+use crate::operations::{Instruction, InstructionRef, NumericParam, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, StandardInstructionRef, UnitaryGate};
 use crate::{Clbit, Qubit};
 
 /// The logical discriminant of `PackedOperation`.
@@ -611,18 +611,6 @@ impl Operation for PackedOperation {
         self.view().control_flow()
     }
     #[inline]
-    fn blocks(&self) -> Vec<CircuitData> {
-        self.view().blocks()
-    }
-    #[inline]
-    fn matrix(&self, params: &[Param]) -> Option<Array2<Complex64>> {
-        self.view().matrix(params)
-    }
-    #[inline]
-    fn definition(&self, params: &[Param]) -> Option<CircuitData> {
-        self.view().definition(params)
-    }
-    #[inline]
     fn standard_gate(&self) -> Option<StandardGate> {
         self.view().standard_gate()
     }
@@ -699,13 +687,27 @@ pub struct PackedInstruction {
 }
 
 impl PackedInstruction {
+    #[inline]
+    pub fn view(&self) -> InstructionRef {
+        match self.op.view() {
+            OperationRef::StandardGate(s) =>
+                InstructionRef::StandardGate(StandardGateRef::new(s, self.params_view())),
+            OperationRef::StandardInstruction(s) =>
+                InstructionRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
+            OperationRef::Gate(g) => InstructionRef::Gate(g),
+            OperationRef::Instruction(i) => InstructionRef::Instruction(i),
+            OperationRef::Operation(o) => InstructionRef::Operation(o),
+            OperationRef::Unitary(u) => InstructionRef::Unitary(u),
+        }
+    }
+
     /// Access the standard gate in this `PackedInstruction`, if it is one.  If the instruction
     /// refers to a Python-space object, `None` is returned.
     #[inline]
     pub fn standard_gate(&self) -> Option<StandardGateRef> {
         self.op
             .try_standard_gate()
-            .map(|gate| StandardGateRef::new(gate, Some(self.params_view())))
+            .map(|gate| StandardGateRef::new(gate, self.params_view()))
     }
 
     /// Get a slice view onto the contained parameters.
@@ -824,25 +826,5 @@ impl PackedInstruction {
             }
             _ => Ok(false),
         }
-    }
-}
-
-impl Instruction for PackedInstruction {
-    type ParamType = Param;
-
-    fn params(&self) -> &[Self::ParamType] {
-        self.params_view()
-    }
-
-    fn blocks(&self) -> Vec<CircuitData> {
-        self.op.
-    }
-
-    fn matrix(&self) -> Option<Array2<Complex64>> {
-        todo!()
-    }
-
-    fn definition(&self) -> Option<CircuitData> {
-        todo!()
     }
 }

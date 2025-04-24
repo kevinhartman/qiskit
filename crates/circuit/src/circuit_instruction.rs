@@ -29,10 +29,7 @@ use smallvec::SmallVec;
 use crate::imports::{
     CONTROLLED_GATE, CONTROL_FLOW_OP, GATE, INSTRUCTION, OPERATION, WARNINGS_WARN,
 };
-use crate::operations::{
-    ArrayType, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate,
-    StandardInstruction, StandardInstructionType, UnitaryGate,
-};
+use crate::operations::{ArrayType, InstructionRef, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, StandardInstructionRef, StandardInstructionType, UnitaryGate};
 use crate::packed_instruction::PackedOperation;
 
 /// A single instruction in a :class:`.QuantumCircuit`, comprised of the :attr:`operation` and
@@ -84,6 +81,20 @@ pub struct CircuitInstruction {
 }
 
 impl CircuitInstruction {
+    #[inline]
+    pub fn view(&self) -> InstructionRef {
+        match self.operation.view() {
+            OperationRef::StandardGate(s) =>
+                InstructionRef::StandardGate(StandardGateRef::new(s, self.params_view())),
+            OperationRef::StandardInstruction(s) =>
+                InstructionRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
+            OperationRef::Gate(g) => InstructionRef::Gate(g),
+            OperationRef::Instruction(i) => InstructionRef::Instruction(i),
+            OperationRef::Operation(o) => InstructionRef::Operation(o),
+            OperationRef::Unitary(u) => InstructionRef::Unitary(u),
+        }
+    }
+
     /// Get the Python-space operation, ensuring that it is mutable from Python space (singleton
     /// gates might not necessarily satisfy this otherwise).
     ///
@@ -212,7 +223,7 @@ impl CircuitInstruction {
 
     #[getter]
     fn matrix<'py>(&'py self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Complex64>>> {
-        let matrix = self.operation.view().matrix(&self.params);
+        let matrix = self.view().matrix();
         matrix.map(move |mat| mat.into_pyarray(py))
     }
 

@@ -41,7 +41,7 @@ fn any_gate_missing_from_target(dag: &DAGCircuit, target: &Target) -> PyResult<b
         }
 
         if gate.op.control_flow() {
-            for block in gate.op.blocks() {
+            for block in gate.view().blocks() {
                 let block_qubits = (0..block.num_qubits()).map(Qubit::new);
                 let inner_wire_map = qargs
                     .iter()

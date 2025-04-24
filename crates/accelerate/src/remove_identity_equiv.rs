@@ -18,7 +18,7 @@ use crate::gate_metrics::rotation_trace_and_dim;
 use crate::nlayout::PhysicalQubit;
 use crate::target_transpiler::Target;
 use qiskit_circuit::dag_circuit::DAGCircuit;
-use qiskit_circuit::operations::Operation;
+use qiskit_circuit::operations::{Instruction, InstructionRef, NumericParam, Operation};
 use qiskit_circuit::operations::OperationRef;
 use qiskit_circuit::operations::Param;
 use qiskit_circuit::operations::StandardGate;
@@ -84,10 +84,10 @@ fn remove_identity_equiv(
             // Skip parameterized gates
             continue;
         }
-        let view = inst.op.view();
+        let view = inst.view();
         match view {
-            OperationRef::StandardGate(gate) => {
-                let (tr_over_dim, dim) = match gate {
+            InstructionRef::StandardGate(inst) => {
+                let (tr_over_dim, dim) = match inst.gate() {
                     StandardGate::RX
                     | StandardGate::RY
                     | StandardGate::RZ
@@ -100,16 +100,16 @@ fn remove_identity_equiv(
                     | StandardGate::CRY
                     | StandardGate::CRZ
                     | StandardGate::CPhase => {
-                        if let Param::Float(angle) = inst.params_view()[0] {
+                        if let NumericParam::Float(angle) = inst.params()[0] {
                             let (tr_over_dim, dim) =
-                                rotation_trace_and_dim(gate, angle).expect("Since only supported rotation gates are given, the result is not None");
+                                rotation_trace_and_dim(inst.gate(), angle).expect("Since only supported rotation gates are given, the result is not None");
                             (tr_over_dim, dim)
                         } else {
                             continue;
                         }
                     }
                     _ => {
-                        if let Some(matrix) = gate.matrix(inst.params_view()) {
+                        if let Some(matrix) = inst.matrix() {
                             let dim = matrix.shape()[0] as f64;
                             let tr_over_dim = matrix.diag().iter().sum::<Complex64>() / dim;
                             (tr_over_dim, dim)

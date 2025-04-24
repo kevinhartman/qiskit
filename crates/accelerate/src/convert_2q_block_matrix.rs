@@ -32,7 +32,7 @@ use crate::QiskitError;
 
 #[inline]
 pub fn get_matrix_from_inst(py: Python, inst: &PackedInstruction) -> PyResult<Array2<Complex64>> {
-    if let Some(mat) = inst.op.matrix(inst.params_view()) {
+    if let Some(mat) = inst.view().matrix() {
         Ok(mat)
     } else if inst.op.try_standard_gate().is_some() {
         Err(QiskitError::new_err(

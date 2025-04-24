@@ -344,7 +344,7 @@ impl DAGOpNode {
 
     #[getter]
     fn matrix<'py>(&'py self, py: Python<'py>) -> Option<Bound<'py, PyArray2<Complex64>>> {
-        let matrix = self.instruction.operation.matrix(&self.instruction.params);
+        let matrix = self.instruction.view().matrix();
         matrix.map(|mat| mat.into_pyarray(py))
     }
 

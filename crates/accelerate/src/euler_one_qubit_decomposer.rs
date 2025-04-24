@@ -1163,7 +1163,7 @@ pub(crate) fn optimize_1q_gates_decomposition(
                     if let Some(target) = target {
                         error *= compute_error_term_from_target(inst.op.name(), target, qubit);
                     }
-                    inst.op.matrix(inst.params_view()).unwrap()
+                    inst.view().matrix().unwrap()
                 } else {
                     unreachable!("Can only have op nodes here")
                 }

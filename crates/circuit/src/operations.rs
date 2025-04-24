@@ -290,39 +290,6 @@ impl Operation for OperationRef<'_> {
         }
     }
     #[inline]
-    fn blocks(&self) -> Vec<CircuitData> {
-        match self {
-            OperationRef::StandardGate(standard) => standard.blocks(),
-            OperationRef::StandardInstruction(instruction) => instruction.blocks(),
-            OperationRef::Gate(gate) => gate.blocks(),
-            OperationRef::Instruction(instruction) => instruction.blocks(),
-            OperationRef::Operation(operation) => operation.blocks(),
-            Self::Unitary(unitary) => unitary.blocks(),
-        }
-    }
-    #[inline]
-    fn matrix(&self, params: &[Param]) -> Option<Array2<Complex64>> {
-        match self {
-            Self::StandardGate(standard) => standard.matrix(params),
-            Self::StandardInstruction(instruction) => instruction.matrix(params),
-            Self::Gate(gate) => gate.matrix(params),
-            Self::Instruction(instruction) => instruction.matrix(params),
-            Self::Operation(operation) => operation.matrix(params),
-            Self::Unitary(unitary) => unitary.matrix(params),
-        }
-    }
-    #[inline]
-    fn definition(&self, params: &[Param]) -> Option<CircuitData> {
-        match self {
-            Self::StandardGate(standard) => standard.definition(params),
-            Self::StandardInstruction(instruction) => instruction.definition(params),
-            Self::Gate(gate) => gate.definition(params),
-            Self::Instruction(instruction) => instruction.definition(params),
-            Self::Operation(operation) => operation.definition(params),
-            Self::Unitary(unitary) => unitary.definition(params),
-        }
-    }
-    #[inline]
     fn standard_gate(&self) -> Option<StandardGate> {
         match self {
             Self::StandardGate(standard) => standard.standard_gate(),
@@ -525,13 +492,68 @@ impl StandardInstruction {
 
 pub trait Instruction {
     type ParamType;
+    type Parameters: IntoIterator<Item = Self::ParamType>;
 
-    fn params(&self) -> &[Self::ParamType];
+    fn params(&self) -> Self::Parameters;
     fn blocks(&self) -> Vec<CircuitData>;
     fn matrix(&self) -> Option<Array2<Complex64>>;
     fn definition(&self) -> Option<CircuitData>;
 }
+/// Represents an operation with bound parameters, what is known as an "instruction" in classical
+/// computing.
+///
+/// Notably, the `StandardGateRef` and `StandardInstructionRef` store a reference to the
+/// instruction's parameters while the Python object variants own their parameters and
+/// can get them from the PyObject.
+///
+/// This intentionally does NOT implement [Instruction] itself since not all variants implement it
+/// using the same associated types.
+#[derive(Debug)]
+pub enum InstructionRef<'a> {
+    StandardGate(StandardGateRef<'a>),
+    StandardInstruction(StandardInstructionRef<'a>),
+    Gate(&'a PyGate),
+    Instruction(&'a PyInstruction),
+    Operation(&'a PyOperation),
+    Unitary(&'a UnitaryGate),
+}
 
+impl<'a> InstructionRef<'a> {
+//     fn blocks(&self) -> Vec<CircuitData> {
+//         match self {
+//             InstructionRef::StandardGate(s) => s.blocks(),
+//             InstructionRef::StandardInstruction(s) => s.blocks(),
+//             InstructionRef::Gate(g) => g.blocks(),
+//             InstructionRef::Instruction(i) => i.blocks(),
+//             InstructionRef::Operation(o) => o.blocks(),
+//             InstructionRef::Unitary(u) => u.blocks(),
+//         }
+//     }
+//
+    pub fn matrix(&self) -> Option<Array2<Complex64>> {
+        match self {
+            InstructionRef::StandardGate(s) => s.matrix(),
+            InstructionRef::StandardInstruction(s) => s.matrix(),
+            InstructionRef::Gate(g) => g.matrix(),
+            InstructionRef::Instruction(i) => i.matrix(),
+            InstructionRef::Operation(o) => o.matrix(),
+            InstructionRef::Unitary(u) => u.matrix(),
+        }
+    }
+//
+//     fn definition(&self) -> Option<CircuitData> {
+//         match self {
+//             InstructionRef::StandardGate(s) => s.definition(),
+//             InstructionRef::StandardInstruction(s) => s.definition(),
+//             InstructionRef::Gate(g) => g.definition(),
+//             InstructionRef::Instruction(i) => i.definition(),
+//             InstructionRef::Operation(o) => o.definition(),
+//             InstructionRef::Unitary(u) => u.definition(),
+//         }
+//     }
+}
+
+#[derive(Debug)]
 pub struct StandardGateRef<'a> {
     gate: StandardGate,
     params: &'a [NumericParam],
@@ -790,9 +812,10 @@ impl<'a> StandardGateRef {
 }
 
 impl<'a> Instruction for StandardGateRef<'a> {
-    type ParamType = NumericParam;
+    type ParamType = &'a NumericParam;
+    type Parameters = &'a [NumericParam];
 
-    fn params(&self) -> &[Self::ParamType] {
+    fn params(&self) -> Self::Parameters {
         self.params
     }
 
@@ -2423,16 +2446,27 @@ impl<'a> Instruction for StandardGateRef<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct StandardInstructionRef<'a> {
     instruction: StandardInstruction,
-    params: Option<&'a [Param]>,
+    params: &'a [Param],
+}
+
+impl<'a> StandardInstructionRef<'a> {
+    pub fn new(instruction: StandardInstruction, params: &'a [Param]) -> Self {
+        Self {
+            instruction,
+            params,
+        }
+    }
 }
 
 impl<'a> Instruction for StandardInstructionRef<'a> {
-    type ParamType = Param;
+    type ParamType = &'a Param;
+    type Parameters = &'a [Param];
 
-    fn params(&self) -> &[Self::ParamType] {
-        todo!()
+    fn params(&self) -> Self::Parameters {
+        self.params
     }
 
     fn blocks(&self) -> Vec<CircuitData> {
@@ -2651,9 +2685,10 @@ impl StandardGate {
     pub fn _to_matrix<'py>(
         &self,
         py: Python<'py>,
-        params: Vec<Param>,
+        params: Vec<NumericParam>,
     ) -> Option<Bound<'py, PyArray2<Complex64>>> {
-        self.matrix(&params).map(|x| x.into_pyarray(py))
+        let gate = StandardGateRef::new(*self, params.as_slice());
+        gate.matrix().map(|x| x.into_pyarray(py))
     }
 
     pub fn _num_params(&self) -> u32 {
@@ -2880,11 +2915,36 @@ impl Operation for PyInstruction {
     }
 }
 
-impl Instruction for PyInstruction {
-    type ParamType = ();
+pub struct PyParametersIter {
+    params: vec::IntoIter<Py<PyAny>>
+}
 
-    fn params(&self) -> &[Self::ParamType] {
-        todo!()
+impl Iterator for PyParametersIter {
+    type Item = Py<PyAny>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.params.next()
+    }
+}
+
+
+impl Instruction for PyInstruction {
+    type ParamType = Py<PyAny>;
+    type Parameters = PyParametersIter;
+
+    fn params(&self) -> Self::Parameters {
+        Python::with_gil(|py| -> Vec<CircuitData> {
+            let params = self.instruction.bind(py).getattr("params").unwrap();
+            PyParametersIter {
+                params: params
+                    .try_iter()
+                    .unwrap()
+                    .map(|b| {
+                        b.unwrap().unbind()
+                    })
+                    .collect()
+            }
+        })
     }
 
     fn blocks(&self) -> Vec<CircuitData> {

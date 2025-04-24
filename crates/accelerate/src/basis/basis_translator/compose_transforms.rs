@@ -23,7 +23,7 @@ use qiskit_circuit::{
     operations::{Operation, Param},
 };
 use smallvec::SmallVec;
-
+use qiskit_circuit::operations::Instruction;
 use crate::equivalence::CircuitFromPython;
 
 // Custom types
@@ -145,7 +145,7 @@ fn get_gates_num_params(
             inst.params_view().len(),
         );
         if inst.op.control_flow() {
-            let blocks = inst.op.blocks();
+            let blocks = inst.view().blocks();
             for block in blocks {
                 get_gates_num_params_circuit(&block, example_gates)?;
             }
@@ -168,7 +168,7 @@ fn get_gates_num_params_circuit(
             inst.params_view().len(),
         );
         if inst.op.control_flow() {
-            let blocks = inst.op.blocks();
+            let blocks = inst.view().blocks();
             for block in blocks {
                 get_gates_num_params_circuit(&block, example_gates)?;
             }
