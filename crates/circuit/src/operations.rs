@@ -16,7 +16,7 @@ use crate::imports::{PARAMETER_EXPRESSION, QUANTUM_CIRCUIT, UNITARY_GATE};
 use crate::{gate_matrix, impl_intopyobject_for_copy_pyclass, Qubit};
 use approx::relative_eq;
 use std::f64::consts::PI;
-use std::ops::Index;
+use std::ops::{Deref, Index};
 use std::{fmt, vec};
 
 use nalgebra::{Matrix2, Matrix4};
@@ -503,15 +503,17 @@ pub trait IntoBlockReferences {
     fn blocks(&self) -> Self::BlockReferences;
 }
 
+pub trait AsCircuit {
+    fn definition(&self) -> Option<CircuitData>;
+}
+
 pub trait ParameterizedOperation {
     type ParamType;
     type Parameters: IntoIterator<Item = Self::ParamType>;
 
     fn params(&self) -> Self::Parameters;
-    fn blocks(&self) -> Vec<CircuitData>;
-    fn matrix(&self) -> Option<Array2<Complex64>>;
-    fn definition(&self) -> Option<CircuitData>;
 }
+
 /// Represents an operation with bound parameters, what is known as an "instruction" in classical
 /// computing.
 ///
@@ -528,42 +530,34 @@ pub enum ParameterizedOperationRef<'a> {
     Gate(&'a PyGate),
     Instruction(&'a PyInstruction),
     Operation(&'a PyOperation),
-    Unitary(&'a UnitaryGate),
+    Unitary(UnitaryGateRef<'a>),
 }
 
 impl<'a> ParameterizedOperationRef<'a> {
-//     fn blocks(&self) -> Vec<CircuitData> {
-//         match self {
-//             InstructionRef::StandardGate(s) => s.blocks(),
-//             InstructionRef::StandardInstruction(s) => s.blocks(),
-//             InstructionRef::Gate(g) => g.blocks(),
-//             InstructionRef::Instruction(i) => i.blocks(),
-//             InstructionRef::Operation(o) => o.blocks(),
-//             InstructionRef::Unitary(u) => u.blocks(),
-//         }
-//     }
-//
-    pub fn matrix(&self) -> Option<Array2<Complex64>> {
+    fn blocks(&self) -> impl Iterator<Item = CircuitData> {
         match self {
-            ParameterizedOperationRef::StandardGate(s) => s.matrix(),
-            ParameterizedOperationRef::StandardInstruction(s) => s.matrix(),
-            ParameterizedOperationRef::Gate(g) => g.matrix(),
-            ParameterizedOperationRef::Instruction(i) => i.matrix(),
-            ParameterizedOperationRef::Operation(o) => o.matrix(),
-            ParameterizedOperationRef::Unitary(u) => u.matrix(),
+            ParameterizedOperationRef::Instruction(i) => i.blocks(),
+            _ => None,
         }
     }
-//
-//     fn definition(&self) -> Option<CircuitData> {
-//         match self {
-//             InstructionRef::StandardGate(s) => s.definition(),
-//             InstructionRef::StandardInstruction(s) => s.definition(),
-//             InstructionRef::Gate(g) => g.definition(),
-//             InstructionRef::Instruction(i) => i.definition(),
-//             InstructionRef::Operation(o) => o.definition(),
-//             InstructionRef::Unitary(u) => u.definition(),
-//         }
-//     }
+
+    pub fn matrix(&self) -> Option<Array2<Complex64>> {
+        match self {
+            Self::StandardGate(s) => s.matrix(),
+            Self::Gate(g) => g.matrix(),
+            Self::Unitary(u) => Some(u.matrix()),
+            _ => None,
+        }
+    }
+
+    fn definition(&self) -> Option<CircuitData> {
+        match self {
+            Self::StandardGate(s) => s.definition(),
+            Self::Gate(g) => g.definition(),
+            Self::Instruction(i) => i.definition(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -574,17 +568,6 @@ pub struct StandardGateRef<'a> {
 
 impl<'a> StandardGateRef {
     pub fn inverse(&self) -> Option<(StandardGate, SmallVec<[NumericParam; 3]>)> {
-        // // A helper struct for accessing params we know to be numeric in context.
-        // struct AsNumeric<'a>(&'a [Param]);
-        //
-        // impl<'a> Index<usize> for AsNumeric<'a> {
-        //     type Output = NumericParam;
-        //
-        //     fn index(&self, index: usize) -> &Self::Output {
-        //         self.0[index].as_numeric().unwrap()
-        //     }
-        // }
-        // let params = AsNumeric(params);
         let params = self.params;
         match self.gate {
             StandardGate::GlobalPhase => Some(Python::with_gil(
@@ -824,19 +807,10 @@ impl<'a> StandardGateRef {
     }
 }
 
-impl<'a> ParameterizedOperation for StandardGateRef<'a> {
-    type ParamType = &'a NumericParam;
-    type Parameters = &'a [NumericParam];
+impl<'a> AsMatrix for StandardGateRef<'a> {
+    type Matrix = Option<Array2<Complex64>>;
 
-    fn params(&self) -> Self::Parameters {
-        self.params
-    }
-
-    fn blocks(&self) -> Vec<CircuitData> {
-        vec![]
-    }
-
-    fn matrix(&self) -> Option<Array2<Complex64>> {
+    fn matrix(&self) -> Self::Matrix {
         let params = self.params;
         match self.gate {
             StandardGate::GlobalPhase => match params {
@@ -1089,7 +1063,9 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
             },
         }
     }
+}
 
+impl<'a> AsCircuit for StandardGateRef<'a> {
     fn definition(&self) -> Option<CircuitData> {
         let params = self.params;
         match self.gate {
@@ -1115,7 +1091,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::I => None,
@@ -1131,7 +1107,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::Y => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1150,7 +1126,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
 
@@ -1166,7 +1142,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::Phase => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1181,7 +1157,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::R => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1196,7 +1172,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         [(StandardGate::U, defparams, smallvec![Qubit(0)])],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1212,7 +1188,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RY => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1228,7 +1204,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RZ => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1244,7 +1220,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         multiply_param(theta, -0.5, py),
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::S => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1259,7 +1235,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::Sdg => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1274,7 +1250,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::SX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1289,7 +1265,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::SXdg => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1304,7 +1280,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::T => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1319,7 +1295,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::Tdg => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1334,7 +1310,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::U => None,
@@ -1350,7 +1326,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::U2 => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1369,7 +1345,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::U3 => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1384,7 +1360,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         )],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CH => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1405,7 +1381,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
 
@@ -1424,7 +1400,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CZ => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1441,7 +1417,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::DCX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1455,7 +1431,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::ECR => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1478,7 +1454,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::Swap => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1493,7 +1469,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::ISwap => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1511,7 +1487,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CPhase => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1543,7 +1519,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CRX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1581,7 +1557,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         NumericParam::Float(0.0),
                     )
-                    .expect("Unexpected Qiskit Python bug!"),
+                        .expect("Unexpected Qiskit Python bug!"),
                 )
             }),
             StandardGate::CRY => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1606,7 +1582,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         NumericParam::Float(0.0),
                     )
-                    .expect("Unexpected Qiskit Python bug!"),
+                        .expect("Unexpected Qiskit Python bug!"),
                 )
             }),
             StandardGate::CRZ => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1631,7 +1607,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         NumericParam::Float(0.0),
                     )
-                    .expect("Unexpected Qiskit Python bug!"),
+                        .expect("Unexpected Qiskit Python bug!"),
                 )
             }),
             StandardGate::CS => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1663,7 +1639,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CSdg => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1695,7 +1671,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CSX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1716,7 +1692,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CU => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1778,7 +1754,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CU1 => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1807,7 +1783,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CU3 => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1864,7 +1840,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RXX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1887,7 +1863,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RYY => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1926,7 +1902,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RZZ => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1944,7 +1920,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RZX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -1964,7 +1940,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::XXMinusYY => Python::with_gil(|py| -> Option<CircuitData> {
@@ -2023,7 +1999,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::XXPlusYY => Python::with_gil(|py| -> Option<CircuitData> {
@@ -2082,7 +2058,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CCX => Python::with_gil(|py| -> Option<CircuitData> {
@@ -2115,7 +2091,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
 
@@ -2135,7 +2111,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::CSwap => Python::with_gil(|py| -> Option<CircuitData> {
@@ -2154,7 +2130,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
 
@@ -2203,7 +2179,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::C3X => Python::with_gil(|py| -> Option<CircuitData> {
@@ -2306,7 +2282,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
 
@@ -2374,7 +2350,7 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
             StandardGate::RC3X => Python::with_gil(|py| -> Option<CircuitData> {
@@ -2452,10 +2428,19 @@ impl<'a> ParameterizedOperation for StandardGateRef<'a> {
                         ],
                         FLOAT_ZERO,
                     )
-                    .expect("Unexpected Qiskit python bug"),
+                        .expect("Unexpected Qiskit python bug"),
                 )
             }),
         }
+    }
+}
+
+impl<'a> ParameterizedOperation for StandardGateRef<'a> {
+    type ParamType = &'a NumericParam;
+    type Parameters = &'a [NumericParam];
+
+    fn params(&self) -> Self::Parameters {
+        self.params
     }
 }
 
@@ -2480,18 +2465,6 @@ impl<'a> ParameterizedOperation for StandardInstructionRef<'a> {
 
     fn params(&self) -> Self::Parameters {
         self.params
-    }
-
-    fn blocks(&self) -> Vec<CircuitData> {
-        vec![]
-    }
-
-    fn matrix(&self) -> Option<Array2<Complex64>> {
-        None
-    }
-
-    fn definition(&self) -> Option<CircuitData> {
-        None
     }
 }
 
@@ -2792,10 +2765,6 @@ impl Operation for StandardGate {
         false
     }
 
-    fn blocks(&self) -> Vec<CircuitData> {
-        vec![]
-    }
-
     fn standard_gate(&self) -> Option<StandardGate> {
         Some(*self)
     }
@@ -2940,7 +2909,6 @@ impl Iterator for PyParametersIter {
     }
 }
 
-
 impl ParameterizedOperation for PyInstruction {
     type ParamType = Py<PyAny>;
     type Parameters = PyParametersIter;
@@ -2959,12 +2927,32 @@ impl ParameterizedOperation for PyInstruction {
             }
         })
     }
+}
 
-    fn blocks(&self) -> Vec<CircuitData> {
+impl AsCircuit for PyInstruction {
+    fn definition(&self) -> Option<CircuitData> {
+        Python::with_gil(|py| -> Option<CircuitData> {
+            match self.instruction.getattr(py, intern!(py, "definition")) {
+                Ok(definition) => definition
+                    .getattr(py, intern!(py, "_data"))
+                    .ok()?
+                    .extract::<CircuitData>(py)
+                    .ok(),
+                Err(_) => None,
+            }
+        })
+    }
+}
+
+impl IntoBlockReferences for PyInstruction {
+    type BlockRef = CircuitData;
+    type BlockReferences = vec::IntoIter<Self::BlockRef>;
+
+    fn blocks(&self) -> Self::BlockReferences {
         if !self.control_flow {
-            return vec![];
+            return vec::IntoIter::default();
         }
-        Python::with_gil(|py| -> Vec<CircuitData> {
+        Python::with_gil(|py| -> Self::BlockReferences {
             // We expect that if PyInstruction::control_flow is true then the operation WILL
             // have a 'blocks' attribute which is a tuple of the Python QuantumCircuit.
             let raw_blocks = self.instruction.getattr(py, "blocks").unwrap();
@@ -2977,22 +2965,8 @@ impl ParameterizedOperation for PyInstruction {
                         .extract::<CircuitData>()
                         .unwrap()
                 })
-                .collect()
-        })
-    }
-    fn matrix(&self) -> Option<Array2<Complex64>> {
-        None
-    }
-    fn definition(&self) -> Option<CircuitData> {
-        Python::with_gil(|py| -> Option<CircuitData> {
-            match self.instruction.getattr(py, intern!(py, "definition")) {
-                Ok(definition) => definition
-                    .getattr(py, intern!(py, "_data"))
-                    .ok()?
-                    .extract::<CircuitData>(py)
-                    .ok(),
-                Err(_) => None,
-            }
+                .collect::<Vec<_>>()
+                .into_iter()
         })
     }
 }
@@ -3038,34 +3012,7 @@ impl Operation for PyGate {
     }
 }
 
-impl ParameterizedOperation for PyGate {
-    type ParamType = Py<PyAny>;
-    type Parameters = PyParametersIter;
-
-    fn params(&self) -> &[Self::ParamType] {
-        todo!()
-    }
-
-    fn blocks(&self) -> Vec<CircuitData> {
-        vec![]
-    }
-    fn matrix(&self) -> Option<Array2<Complex64>> {
-        Python::with_gil(|py| -> Option<Array2<Complex64>> {
-            match self.gate.getattr(py, intern!(py, "to_matrix")) {
-                Ok(to_matrix) => {
-                    let res: Option<PyObject> = to_matrix.call0(py).ok()?.extract(py).ok();
-                    match res {
-                        Some(x) => {
-                            let array: PyReadonlyArray2<Complex64> = x.extract(py).ok()?;
-                            Some(array.as_array().to_owned())
-                        }
-                        None => None,
-                    }
-                }
-                Err(_) => None,
-            }
-        })
-    }
+impl AsCircuit for PyGate {
     fn definition(&self) -> Option<CircuitData> {
         Python::with_gil(|py| -> Option<CircuitData> {
             match self.gate.getattr(py, intern!(py, "definition")) {
@@ -3077,6 +3024,15 @@ impl ParameterizedOperation for PyGate {
                 Err(_) => None,
             }
         })
+    }
+}
+
+impl ParameterizedOperation for PyGate {
+    type ParamType = Py<PyAny>;
+    type Parameters = PyParametersIter;
+
+    fn params(&self) -> &[Self::ParamType] {
+        todo!()
     }
 }
 
@@ -3149,19 +3105,10 @@ impl Operation for PyOperation {
 
 impl ParameterizedOperation for PyOperation {
     type ParamType = Py<PyAny>;
+    type Parameters = PyParametersIter;
 
     fn params(&self) -> &[Self::ParamType] {
         todo!()
-    }
-
-    fn blocks(&self) -> Vec<CircuitData> {
-        vec![]
-    }
-    fn matrix(&self) -> Option<Array2<Complex64>> {
-        None
-    }
-    fn definition(&self) -> Option<CircuitData> {
-        None
     }
 }
 
@@ -3187,7 +3134,9 @@ impl PartialEq for UnitaryGate {
             (ArrayType::TwoQ(mat1), ArrayType::TwoQ(mat2)) => mat1 == mat2,
             // we could also slightly optimize comparisons between NDArray and OneQ/TwoQ if
             // this becomes performance critical
-            _ => self.matrix(&[]) == other.matrix(&[]),
+            _ => {
+                self.matrix() == other.matrix()
+            },
         }
     }
 }
@@ -3222,33 +3171,46 @@ impl Operation for UnitaryGate {
     }
 }
 
-impl ParameterizedOperation for UnitaryGate {
-    type ParamType = ();
+impl AsMatrix for UnitaryGate {
+    type Matrix = Array2<Complex64>;
 
-    fn params(&self) -> &[Self::ParamType] {
-        todo!()
-    }
-
-    fn blocks(&self) -> Vec<CircuitData> {
-        vec![]
-    }
-    fn matrix(&self) -> Option<Array2<Complex64>> {
+    fn matrix(&self) -> Self::Matrix {
         match &self.array {
-            ArrayType::NDArray(arr) => Some(arr.clone()),
-            ArrayType::OneQ(mat) => Some(array!(
+            ArrayType::NDArray(arr) => arr.clone(),
+            ArrayType::OneQ(mat) => array!(
                 [mat[(0, 0)], mat[(0, 1)]],
                 [mat[(1, 0)], mat[(1, 1)]],
-            )),
-            ArrayType::TwoQ(mat) => Some(array!(
+            ),
+            ArrayType::TwoQ(mat) => array!(
                 [mat[(0, 0)], mat[(0, 1)], mat[(0, 2)], mat[(0, 3)]],
                 [mat[(1, 0)], mat[(1, 1)], mat[(1, 2)], mat[(1, 3)]],
                 [mat[(2, 0)], mat[(2, 1)], mat[(2, 2)], mat[(2, 3)]],
                 [mat[(3, 0)], mat[(3, 1)], mat[(3, 2)], mat[(3, 3)]],
-            )),
+            ),
         }
     }
-    fn definition(&self) -> Option<CircuitData> {
-        None
+}
+
+#[derive(Debug)]
+pub struct UnitaryGateRef<'a> {
+    unitary: &'a UnitaryGate,
+    params: &'a [NumericParam],
+}
+
+impl<'a> Deref for UnitaryGateRef<'a> {
+    type Target = UnitaryGate;
+
+    fn deref(&self) -> &Self::Target {
+        self.unitary
+    }
+}
+
+impl<'a> ParameterizedOperation for UnitaryGateRef<'a> {
+    type ParamType = &'a NumericParam;
+    type Parameters = &'a [NumericParam];
+
+    fn params(&self) -> Self::Parameters {
+        self.params
     }
 }
 
