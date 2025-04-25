@@ -57,7 +57,7 @@ use qiskit_circuit::circuit_instruction::OperationFromPython;
 use qiskit_circuit::gate_matrix::{
     CX_GATE, H_GATE, ONE_QUBIT_IDENTITY, SDG_GATE, SX_GATE, S_GATE, X_GATE,
 };
-use qiskit_circuit::operations::{Operation, Param, StandardGate};
+use qiskit_circuit::operations::{ParameterizedOperation, NumericParam, Operation, Param, StandardGate, StandardGateRef};
 use qiskit_circuit::packed_instruction::PackedOperation;
 use qiskit_circuit::slice::{PySequenceIndex, SequenceIndex};
 use qiskit_circuit::util::{c64, GateArray1Q, GateArray2Q, C_M_ONE, C_ONE, C_ZERO, IM, M_IM};
@@ -2468,7 +2468,10 @@ pub enum RXXEquivalent {
 impl RXXEquivalent {
     fn matrix(&self, param: f64) -> PyResult<Array2<Complex64>> {
         match self {
-            Self::Standard(gate) => Ok(gate.matrix(&[Param::Float(param)]).unwrap()),
+            Self::Standard(gate) =>  {
+                let gate = StandardGateRef::new(*gate, &[NumericParam::Float(param)]);
+                Ok(gate.matrix().unwrap())
+            },
             Self::CustomPython(gate_cls) => Python::with_gil(|py: Python| {
                 let gate_obj = gate_cls.bind(py).call1((param,))?;
                 let raw_matrix = gate_obj

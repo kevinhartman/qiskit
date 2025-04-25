@@ -24,7 +24,7 @@ use smallvec::SmallVec;
 use crate::circuit_data::CircuitData;
 use crate::imports::{get_std_gate_class, BARRIER, DEEPCOPY, DELAY, MEASURE, RESET, UNITARY_GATE};
 use crate::interner::Interned;
-use crate::operations::{Instruction, InstructionRef, NumericParam, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, StandardInstructionRef, UnitaryGate};
+use crate::operations::{ParameterizedOperation, ParameterizedOperationRef, NumericParam, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, StandardInstructionRef, UnitaryGate};
 use crate::{Clbit, Qubit};
 
 /// The logical discriminant of `PackedOperation`.
@@ -688,16 +688,16 @@ pub struct PackedInstruction {
 
 impl PackedInstruction {
     #[inline]
-    pub fn view(&self) -> InstructionRef {
+    pub fn view(&self) -> ParameterizedOperationRef {
         match self.op.view() {
             OperationRef::StandardGate(s) =>
-                InstructionRef::StandardGate(StandardGateRef::new(s, self.params_view())),
+                ParameterizedOperationRef::StandardGate(StandardGateRef::new(s, self.params_view())),
             OperationRef::StandardInstruction(s) =>
-                InstructionRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
-            OperationRef::Gate(g) => InstructionRef::Gate(g),
-            OperationRef::Instruction(i) => InstructionRef::Instruction(i),
-            OperationRef::Operation(o) => InstructionRef::Operation(o),
-            OperationRef::Unitary(u) => InstructionRef::Unitary(u),
+                ParameterizedOperationRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
+            OperationRef::Gate(g) => ParameterizedOperationRef::Gate(g),
+            OperationRef::Instruction(i) => ParameterizedOperationRef::Instruction(i),
+            OperationRef::Operation(o) => ParameterizedOperationRef::Operation(o),
+            OperationRef::Unitary(u) => ParameterizedOperationRef::Unitary(u),
         }
     }
 

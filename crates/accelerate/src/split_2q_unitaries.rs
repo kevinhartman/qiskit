@@ -19,7 +19,7 @@ use rustworkx_core::petgraph::stable_graph::NodeIndex;
 use smallvec::{smallvec, SmallVec};
 
 use qiskit_circuit::dag_circuit::{DAGCircuit, NodeType, Wire};
-use qiskit_circuit::operations::{ArrayType, Operation, OperationRef, Param, UnitaryGate};
+use qiskit_circuit::operations::{ArrayType, ParameterizedOperation, ParameterizedOperationRef, NumericParam, Operation, OperationRef, Param, UnitaryGate};
 use qiskit_circuit::packed_instruction::PackedOperation;
 use qiskit_circuit::Qubit;
 
@@ -43,12 +43,14 @@ pub fn split_2q_unitaries(
             // We only attempt to split UnitaryGate objects, but this could be extended in future
             // -- however we need to ensure that we can compile the resulting single-qubit unitaries
             // to the supported basis gate set.
-            if qubits.len() != 2 || !matches!(inst.op.view(), OperationRef::Unitary(_)) {
+            if qubits.len() != 2 {
                 continue;
             }
-            let matrix = inst
-                .op
-                .matrix(inst.params_view())
+            let ParameterizedOperationRef::Unitary(unitary) = inst.view() else {
+                continue;
+            };
+            let matrix = unitary
+                .matrix()
                 .expect("'unitary' gates should always have a matrix form");
             let decomp = TwoQubitWeylDecomposition::new_inner(
                 matrix.view(),
@@ -92,7 +94,7 @@ pub fn split_2q_unitaries(
                     }
                 };
                 dag.replace_node_with_1q_ops(py, node, insert_fn)?;
-                dag.add_global_phase(&Param::Float(decomp.global_phase))?;
+                dag.add_global_phase(&NumericParam::Float(decomp.global_phase))?;
             }
         }
     }
@@ -108,8 +110,8 @@ pub fn split_2q_unitaries(
             let qubits = dag.get_qargs(inst.qubits).to_vec();
             if qubits.len() == 2 && inst.op.name() == "unitary" {
                 let matrix = inst
-                    .op
-                    .matrix(inst.params_view())
+                    .view()
+                    .matrix()
                     .expect("'unitary' gates should always have a matrix form");
                 let decomp = TwoQubitWeylDecomposition::new_inner(
                     matrix.view(),
@@ -161,7 +163,7 @@ pub fn split_2q_unitaries(
                         #[cfg(feature = "cache_pygates")]
                         None,
                     )?;
-                    new_dag.add_global_phase(&Param::Float(decomp.global_phase + PI4))?;
+                    new_dag.add_global_phase(&NumericParam::Float(decomp.global_phase + PI4))?;
                     continue; // skip the general instruction handling code
                 }
             }

@@ -212,9 +212,9 @@ pub trait Operation {
     fn num_clbits(&self) -> u32;
     fn num_params(&self) -> u32;
     fn control_flow(&self) -> bool;
-    fn blocks(&self) -> Vec<CircuitData>;
-    fn matrix(&self, params: &[Param]) -> Option<Array2<Complex64>>;
-    fn definition(&self, params: &[Param]) -> Option<CircuitData>;
+    // fn blocks(&self) -> Vec<CircuitData>;
+    // fn matrix(&self, params: &[Param]) -> Option<Array2<Complex64>>;
+    // fn definition(&self, params: &[Param]) -> Option<CircuitData>;
     fn standard_gate(&self) -> Option<StandardGate>;
     fn directive(&self) -> bool;
 }
@@ -490,7 +490,20 @@ impl StandardInstruction {
     }
 }
 
-pub trait Instruction {
+pub trait AsMatrix {
+    type Matrix;
+
+    fn matrix(&self) -> Self::Matrix;
+}
+
+pub trait IntoBlockReferences {
+    type BlockRef;
+    type BlockReferences: Iterator<Item = Self::BlockRef>;
+
+    fn blocks(&self) -> Self::BlockReferences;
+}
+
+pub trait ParameterizedOperation {
     type ParamType;
     type Parameters: IntoIterator<Item = Self::ParamType>;
 
@@ -506,10 +519,10 @@ pub trait Instruction {
 /// instruction's parameters while the Python object variants own their parameters and
 /// can get them from the PyObject.
 ///
-/// This intentionally does NOT implement [Instruction] itself since not all variants implement it
+/// This intentionally does NOT implement [ParameterizedOperation] itself since not all variants implement it
 /// using the same associated types.
 #[derive(Debug)]
-pub enum InstructionRef<'a> {
+pub enum ParameterizedOperationRef<'a> {
     StandardGate(StandardGateRef<'a>),
     StandardInstruction(StandardInstructionRef<'a>),
     Gate(&'a PyGate),
@@ -518,7 +531,7 @@ pub enum InstructionRef<'a> {
     Unitary(&'a UnitaryGate),
 }
 
-impl<'a> InstructionRef<'a> {
+impl<'a> ParameterizedOperationRef<'a> {
 //     fn blocks(&self) -> Vec<CircuitData> {
 //         match self {
 //             InstructionRef::StandardGate(s) => s.blocks(),
@@ -532,12 +545,12 @@ impl<'a> InstructionRef<'a> {
 //
     pub fn matrix(&self) -> Option<Array2<Complex64>> {
         match self {
-            InstructionRef::StandardGate(s) => s.matrix(),
-            InstructionRef::StandardInstruction(s) => s.matrix(),
-            InstructionRef::Gate(g) => g.matrix(),
-            InstructionRef::Instruction(i) => i.matrix(),
-            InstructionRef::Operation(o) => o.matrix(),
-            InstructionRef::Unitary(u) => u.matrix(),
+            ParameterizedOperationRef::StandardGate(s) => s.matrix(),
+            ParameterizedOperationRef::StandardInstruction(s) => s.matrix(),
+            ParameterizedOperationRef::Gate(g) => g.matrix(),
+            ParameterizedOperationRef::Instruction(i) => i.matrix(),
+            ParameterizedOperationRef::Operation(o) => o.matrix(),
+            ParameterizedOperationRef::Unitary(u) => u.matrix(),
         }
     }
 //
@@ -811,7 +824,7 @@ impl<'a> StandardGateRef {
     }
 }
 
-impl<'a> Instruction for StandardGateRef<'a> {
+impl<'a> ParameterizedOperation for StandardGateRef<'a> {
     type ParamType = &'a NumericParam;
     type Parameters = &'a [NumericParam];
 
@@ -2461,7 +2474,7 @@ impl<'a> StandardInstructionRef<'a> {
     }
 }
 
-impl<'a> Instruction for StandardInstructionRef<'a> {
+impl<'a> ParameterizedOperation for StandardInstructionRef<'a> {
     type ParamType = &'a Param;
     type Parameters = &'a [Param];
 
@@ -2928,7 +2941,7 @@ impl Iterator for PyParametersIter {
 }
 
 
-impl Instruction for PyInstruction {
+impl ParameterizedOperation for PyInstruction {
     type ParamType = Py<PyAny>;
     type Parameters = PyParametersIter;
 
@@ -3025,8 +3038,9 @@ impl Operation for PyGate {
     }
 }
 
-impl Instruction for PyGate {
+impl ParameterizedOperation for PyGate {
     type ParamType = Py<PyAny>;
+    type Parameters = PyParametersIter;
 
     fn params(&self) -> &[Self::ParamType] {
         todo!()
@@ -3060,6 +3074,28 @@ impl Instruction for PyGate {
                     .ok()?
                     .extract::<CircuitData>(py)
                     .ok(),
+                Err(_) => None,
+            }
+        })
+    }
+}
+
+impl AsMatrix for PyGate {
+    type Matrix = Option<Array2<Complex64>>;
+
+    fn matrix(&self) -> Self::Matrix {
+        Python::with_gil(|py| -> Option<Array2<Complex64>> {
+            match self.gate.getattr(py, intern!(py, "to_matrix")) {
+                Ok(to_matrix) => {
+                    let res: Option<PyObject> = to_matrix.call0(py).ok()?.extract(py).ok();
+                    match res {
+                        Some(x) => {
+                            let array: PyReadonlyArray2<Complex64> = x.extract(py).ok()?;
+                            Some(array.as_array().to_owned())
+                        }
+                        None => None,
+                    }
+                }
                 Err(_) => None,
             }
         })
@@ -3111,7 +3147,7 @@ impl Operation for PyOperation {
     }
 }
 
-impl Instruction for PyOperation {
+impl ParameterizedOperation for PyOperation {
     type ParamType = Py<PyAny>;
 
     fn params(&self) -> &[Self::ParamType] {
@@ -3186,7 +3222,7 @@ impl Operation for UnitaryGate {
     }
 }
 
-impl Instruction for UnitaryGate {
+impl ParameterizedOperation for UnitaryGate {
     type ParamType = ();
 
     fn params(&self) -> &[Self::ParamType] {

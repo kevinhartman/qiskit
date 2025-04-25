@@ -34,7 +34,7 @@ use qiskit_circuit::dag_circuit::DAGCircuit;
 use qiskit_circuit::gate_matrix::ONE_QUBIT_IDENTITY;
 use qiskit_circuit::imports::QUANTUM_CIRCUIT;
 use qiskit_circuit::operations::StandardGate::{I, X, Y, Z};
-use qiskit_circuit::operations::{Instruction, NumericParam, Operation, OperationRef, Param, PyInstruction, StandardGate};
+use qiskit_circuit::operations::{ParameterizedOperation, NumericParam, Operation, OperationRef, Param, PyInstruction, StandardGate};
 use qiskit_circuit::packed_instruction::{PackedInstruction, PackedOperation};
 
 use crate::euler_one_qubit_decomposer::optimize_1q_gates_decomposition;
@@ -449,7 +449,7 @@ pub(crate) fn twirl_circuit(
                             )
                         )))
                     }
-                    let matrix = gate.operation.matrix(&gate.params);
+                    let matrix = gate.view().matrix();
                     if let Some(matrix) = matrix {
                         let twirl_set = generate_twirling_set(matrix.view());
                         if twirl_set.is_empty() {

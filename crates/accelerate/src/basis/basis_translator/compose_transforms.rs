@@ -23,7 +23,7 @@ use qiskit_circuit::{
     operations::{Operation, Param},
 };
 use smallvec::SmallVec;
-use qiskit_circuit::operations::Instruction;
+use qiskit_circuit::operations::ParameterizedOperation;
 use crate::equivalence::CircuitFromPython;
 
 // Custom types

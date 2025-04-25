@@ -29,7 +29,7 @@ use smallvec::SmallVec;
 use crate::imports::{
     CONTROLLED_GATE, CONTROL_FLOW_OP, GATE, INSTRUCTION, OPERATION, WARNINGS_WARN,
 };
-use crate::operations::{ArrayType, InstructionRef, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, StandardInstructionRef, StandardInstructionType, UnitaryGate};
+use crate::operations::{ArrayType, ParameterizedOperationRef, Operation, OperationRef, Param, PyGate, PyInstruction, PyOperation, StandardGate, StandardGateRef, StandardInstruction, StandardInstructionRef, StandardInstructionType, UnitaryGate};
 use crate::packed_instruction::PackedOperation;
 
 /// A single instruction in a :class:`.QuantumCircuit`, comprised of the :attr:`operation` and
@@ -82,16 +82,16 @@ pub struct CircuitInstruction {
 
 impl CircuitInstruction {
     #[inline]
-    pub fn view(&self) -> InstructionRef {
+    pub fn view(&self) -> ParameterizedOperationRef {
         match self.operation.view() {
             OperationRef::StandardGate(s) =>
-                InstructionRef::StandardGate(StandardGateRef::new(s, self.params_view())),
+                ParameterizedOperationRef::StandardGate(StandardGateRef::new(s, self.params_view())),
             OperationRef::StandardInstruction(s) =>
-                InstructionRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
-            OperationRef::Gate(g) => InstructionRef::Gate(g),
-            OperationRef::Instruction(i) => InstructionRef::Instruction(i),
-            OperationRef::Operation(o) => InstructionRef::Operation(o),
-            OperationRef::Unitary(u) => InstructionRef::Unitary(u),
+                ParameterizedOperationRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
+            OperationRef::Gate(g) => ParameterizedOperationRef::Gate(g),
+            OperationRef::Instruction(i) => ParameterizedOperationRef::Instruction(i),
+            OperationRef::Operation(o) => ParameterizedOperationRef::Operation(o),
+            OperationRef::Unitary(u) => ParameterizedOperationRef::Unitary(u),
         }
     }
 
@@ -472,6 +472,22 @@ pub struct OperationFromPython {
     pub operation: PackedOperation,
     pub params: SmallVec<[Param; 3]>,
     pub label: Option<Box<String>>,
+}
+
+impl OperationFromPython {
+    #[inline]
+    pub fn view(&self) -> ParameterizedOperationRef {
+        match self.operation.view() {
+            OperationRef::StandardGate(s) =>
+                ParameterizedOperationRef::StandardGate(StandardGateRef::new(s, self.params_view())),
+            OperationRef::StandardInstruction(s) =>
+                ParameterizedOperationRef::StandardInstruction(StandardInstructionRef::new(s, self.params_view())),
+            OperationRef::Gate(g) => ParameterizedOperationRef::Gate(g),
+            OperationRef::Instruction(i) => ParameterizedOperationRef::Instruction(i),
+            OperationRef::Operation(o) => ParameterizedOperationRef::Operation(o),
+            OperationRef::Unitary(u) => ParameterizedOperationRef::Unitary(u),
+        }
+    }
 }
 
 impl<'py> FromPyObject<'py> for OperationFromPython {
